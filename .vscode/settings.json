@@ -1,0 +1,18 @@
+{
+    "python.venvPath": ".venv",
+    "python.pythonPath": "${workspaceFolder}/.venv/Scripts/python",
+    "python.autoComplete.addBrackets": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.linting.flake8Args": [
+        "--max-line-length=120",
+        "--ignore=E501, W504"
+    ],
+    "python.linting.mypyEnabled": true,
+    "python.formatting.provider": "black",
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4
+    },
+}
