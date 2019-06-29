@@ -2,14 +2,34 @@
     "python.venvPath": ".venv",
     "python.pythonPath": "${workspaceFolder}/.venv/Scripts/python",
     "python.autoComplete.addBrackets": true,
+
+    // flake8
     "python.linting.pylintEnabled": false,
+    "python.linting.lintOnSave": true,
     "python.linting.flake8Enabled": true,
     "python.linting.flake8Args": [
         "--max-line-length=120",
-        "--ignore=E501, W504"
+        "--ignore=E203, E501, W503, W504"
     ],
+
+    // mypy
     "python.linting.mypyEnabled": true,
+    "python.linting.mypyArgs": [
+        "--ignore-missing-imports",
+        "--follow-imports=silent",
+        "--show-column-numbers"
+    ],
+    
+    // black
     "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "120",
+        "--verbose"
+    ],
+    "python.sortImports.path": "isort",
+
+    // python
     "[python]": {
         "editor.formatOnSave": true,
         "editor.insertSpaces": true,

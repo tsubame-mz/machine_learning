@@ -11,12 +11,14 @@ def main():
     done = False
     step = 0
     while not done:
-        # env.render()
+        env.render()
         action = env.action_space.sample()
         next_obs, reward, done, info = env.step(action)
         print(step + 1, obs, action, next_obs, reward, done, info)
         obs = next_obs
         step += 1
+    env.render()
+    env.close()
 
 
 if __name__ == "__main__":

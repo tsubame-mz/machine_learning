@@ -4,3 +4,5 @@ import sys
 sys.path.insert(0, os.path.abspath("../src"))
 
 import envs
+import model
+import actor
