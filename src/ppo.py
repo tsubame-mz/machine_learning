@@ -35,7 +35,7 @@ class ValNet(nn.Module):
         )
 
     def forward(self, x):
-        return self.layer(x).squeeze()
+        return self.layer(x)
 
 
 class ActorCritic(nn.Module):
@@ -48,19 +48,23 @@ class ActorCritic(nn.Module):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0)
 
-    def sampling_action(self, state):
-        pi = self.pol_net(state)
-        action = Categorical(pi).sample()
-        return action.squeeze(0).item()
-
     def get_value(self, state):
         return self.v_net(state)
 
     def llh(self, state, action):
-        # pi(a|s) : 対数尤度
+        # pi(a|s)の対数尤度
         pi = self.pol_net(state)
         c = Categorical(pi)
         return c.log_prob(action), c.entropy()
+
+    def eval_forward(self, state):
+        # Action / Value / llh
+        pi = self.pol_net(state)
+        c = Categorical(pi)
+        action = c.sample()
+        value = self.v_net(state)
+        log_pi = c.log_prob(action)
+        return action.squeeze().item(), value, log_pi
 
 
 class Memory:
@@ -72,16 +76,16 @@ class Memory:
         self.actions = []
         self.rewards = []
         self.values = []
-        self.log_ps = []
+        self.log_pis = []
         self.returns = []
         self.advantages = []
 
-    def add(self, state, action, reward, value, log_p):
+    def add(self, state, action, reward, value, log_pi):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.values.append(value)
-        self.log_ps.append(log_p)
+        self.log_pis.append(log_pi)
 
     def calculate_returns(self, gamma=0.99, lam=0.97):
         values = np.append(self.values, 0)
@@ -106,7 +110,7 @@ class Memory:
         batch = [
             torch.FloatTensor(self.states),
             torch.FloatTensor(self.actions),
-            torch.FloatTensor(self.log_ps),
+            torch.FloatTensor(self.log_pis),
             torch.FloatTensor(self.returns),
             advantages_var,
         ]
@@ -116,26 +120,26 @@ class Memory:
 
 def update(memory, actor_critic, optim_pol, optim_val, clip_ratio=0.2, target_kl=0.01, beta=1e-3):
     actor_critic.train()  # 学習モード
-    states_var, actions_var, log_ps_var, returns_var, advantages_var = memory.get_batch()
+    states_var, actions_var, log_pis_var, returns_var, advantages_var = memory.get_batch()
 
     train_pi_iters = 80
     for _ in range(train_pi_iters):
-        new_log_ps, entropy = actor_critic.llh(states_var, actions_var)
-        ratio = (new_log_ps - log_ps_var).exp()  # pi(a|s) / pi_old(a|s)
+        new_log_pis, entropy = actor_critic.llh(states_var, actions_var)
+        ratio = (new_log_pis - log_pis_var).exp()  # pi(a|s) / pi_old(a|s)
         min_adv = torch.where(advantages_var > 0, (1 + clip_ratio) * advantages_var, (1 - clip_ratio) * advantages_var)
         pi_loss = -(torch.min(ratio * advantages_var, min_adv)).mean() - (beta * entropy.mean())
         optim_pol.zero_grad()
         pi_loss.backward()
         optim_pol.step()
 
-        kl = (new_log_ps - log_ps_var).mean()  # KL-divergence
+        kl = (new_log_pis - log_pis_var).mean()  # KL-divergence
         if kl > 1.5 * target_kl:
             # print("Early stopping")
             break
 
     train_v_iters = 80
     for _ in range(train_v_iters):
-        values = actor_critic.get_value(states_var)
+        values = actor_critic.get_value(states_var).squeeze()
         v_loss = (returns_var - values).pow(2).mean()
         optim_val.zero_grad()
         v_loss.backward()
@@ -176,14 +180,12 @@ def main():
 
         for step in range(max_steps):
             state_var = torch.from_numpy(state).reshape(1, -1).float()  # バッチ形式のテンソル化
-            action = actor_critic.sampling_action(state_var)
+            action, value, log_pi = actor_critic.eval_forward(state_var)
             next_state, reward, done, _ = env.step(action)
 
             reward = reward_modify(step, done)  # 報酬を手動調整
 
-            value = actor_critic.get_value(state_var).item()
-            log_p, _ = actor_critic.llh(state_var, torch.tensor(action))
-            memory.add(state, action, reward, value, log_p.item())
+            memory.add(state, action, reward, value.item(), log_pi.item())
 
             if done:
                 memory.calculate_returns()
@@ -192,7 +194,7 @@ def main():
             state = next_state
 
         pi_loss, v_loss = update(memory, actor_critic, optim_pol, optim_val)
-        print("Episode[{:3d}], Step[{:3d}], Loss(P/L)[{:.6f} / {:.6f}]".format(episode + 1, step + 1, pi_loss, v_loss))
+        print("Episode[{:3d}], Step[{:3d}], Loss(P/V)[{:.6f} / {:.6f}]".format(episode + 1, step + 1, pi_loss, v_loss))
 
 
 if __name__ == "__main__":
