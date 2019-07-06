@@ -150,7 +150,6 @@ def main():
     # 環境関係
     parser.add_argument("--env", type=str, default="CartPole-v0")
     parser.add_argument("--max_episodes", type=int, default=500)
-    parser.add_argument("--max_steps", type=int, default=200)
     # ネットワーク関係
     parser.add_argument("--hid_num", type=int, default=64)
     parser.add_argument("--droprate", type=float, default=0.2)
@@ -181,7 +180,9 @@ def main():
         state = env.reset()
         memory.initialize()
 
-        for step in range(args.max_steps):
+        done = False
+        step = 0
+        while not done:
             state_tsr = torch.from_numpy(state).reshape(1, -1).float()  # バッチ形式のテンソル化
             action, value, log_pi = agent.get_action(state_tsr)
             next_state, _, done, _ = env.step(action)
@@ -190,12 +191,10 @@ def main():
 
             memory.add(state, action, reward, value, log_pi)
 
-            if done:
-                memory.finish_path(args.gamma, args.lam)
-                break
-
             state = next_state
+            step += 1
 
+        memory.finish_path(args.gamma, args.lam)
         model.train()  # 学習モード
         batch = memory.get_batch(args.adv_eps)
         pi_loss, v_loss, entropy, total_loss = agent.update(
@@ -204,7 +203,7 @@ def main():
 
         print(
             "Episode[{:3d}], Step[{:3d}], Loss(P/V/E/T)[{:+.6f}/{:+.6f}/{:+.6f}/{:+.6f}]".format(
-                episode + 1, step + 1, pi_loss, v_loss, entropy, total_loss
+                episode + 1, step, pi_loss, v_loss, entropy, total_loss
             )
         )
 
