@@ -51,18 +51,18 @@ class SimpleConvNet(nn.Module):
     def __init__(self):
         super(SimpleConvNet, self).__init__()
         self.layers = nn.Sequential(
-            # (1, 28, 28)
-            Conv_BN_Act(1, 16, 3),
-            # (16, 28, 28)
+            # (3, 32, 32)
+            Conv_BN_Act(3, 16, 3),
+            # (16, 32, 32)
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             nn.AvgPool2d(kernel_size=(2, 2), stride=2),
-            # (16, 14, 14)
+            # (16, 16, 16)
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             nn.AvgPool2d(kernel_size=(2, 2), stride=2),
-            # (16, 7, 7)
+            # (16, 8, 8)
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
@@ -183,8 +183,8 @@ def main():
     transform_validate = transforms.Compose([transforms.ToTensor()])
 
     # データセットの取得
-    train_data_set = datasets.MNIST(args.datasets_dir, train=True, transform=transform_train, download=True)
-    validate_data_set = datasets.MNIST(args.datasets_dir, train=False, transform=transform_validate, download=True)
+    train_data_set = datasets.CIFAR10(args.datasets_dir, train=True, transform=transform_train, download=True)
+    validate_data_set = datasets.CIFAR10(args.datasets_dir, train=False, transform=transform_validate, download=True)
 
     # データローダーの割り当て
     train_data_loader = torch.utils.data.DataLoader(
