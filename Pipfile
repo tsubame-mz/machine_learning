@@ -11,6 +11,8 @@ isort = "*"
 
 [packages]
 gym = "*"
+numpy = "~=1.16.4"
+tb-nightly = "*"
 
 [requires]
 python_version = "3.7"
@@ -21,3 +23,4 @@ allow_prereleases = true
 [scripts]
 install_pytorch = "pip install https://download.pytorch.org/whl/cpu/torch-1.1.0-cp37-cp37m-win_amd64.whl"
 install_torchvision = "pip install https://download.pytorch.org/whl/cpu/torchvision-0.3.0-cp37-cp37m-win_amd64.whl"
+run_tb = "tensorboard --logdir=logs --host=127.0.0.1"

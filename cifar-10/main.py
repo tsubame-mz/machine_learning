@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
+from torch.utils.tensorboard import SummaryWriter
 import argparse
 import time
 
@@ -51,27 +52,27 @@ class SimpleConvNet(nn.Module):
     def __init__(self):
         super(SimpleConvNet, self).__init__()
         self.layers = nn.Sequential(
-            # (3, 32, 32)
+            # (N, 3, 32, 32)
             Conv_BN_Act(3, 16, 3),
-            # (16, 32, 32)
+            # (N, 16, 32, 32)
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             nn.AvgPool2d(kernel_size=(2, 2), stride=2),
-            # (16, 16, 16)
+            # (N, 16, 16, 16)
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             nn.AvgPool2d(kernel_size=(2, 2), stride=2),
-            # (16, 8, 8)
+            # (N, 16, 8, 8)
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             Conv_BN_Act(16, 16, 3),
             nn.MaxPool2d(3, stride=1, padding=1),
             nn.AdaptiveAvgPool2d((1, 1)),
-            # (16, 1, 1)
+            # (N, 16, 1, 1)
         )
         self.fc = nn.Linear(16, 10)
-        # (10)
+        # (N, 10)
 
         # ネットワークの重みを初期化
         for m in self.modules():
@@ -86,7 +87,7 @@ class SimpleConvNet(nn.Module):
         return F.softmax(x, dim=-1)
 
 
-def train(args, data_loader, model, loss_func, optimizer, epoch):
+def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_step):
     # 学習モード
     model.train()
 
@@ -126,10 +127,14 @@ def train(args, data_loader, model, loss_func, optimizer, epoch):
                     batch_time_avg.avg * args.log_interval,
                 )
             )
+            writer.add_scalar("train/loss", loss.item(), log_step)
+            writer.add_scalar("train/acc", acc.item(), log_step)
+            log_step += 1
     print("Acc(Train)[{:.3f}%], Time[{:.3f}s]".format(acc_avg.avg, batch_time_avg.sum))
+    return log_step
 
 
-def validate(args, data_loader, model, loss_func, epoch):
+def validate(args, data_loader, model, loss_func, epoch, writer, log_step):
     # 評価モード
     model.eval()
 
@@ -165,8 +170,11 @@ def validate(args, data_loader, model, loss_func, epoch):
                     batch_time_avg.avg * args.log_interval,
                 )
             )
+            writer.add_scalar("validate/loss", loss.item(), log_step)
+            writer.add_scalar("validate/acc", acc.item(), log_step)
+            log_step += 1
     print("Acc(Validate)[{:.3f}%], Time[{:.3f}s]".format(acc_avg.avg, batch_time_avg.sum))
-    return acc_avg.avg
+    return acc_avg.avg, log_step
 
 
 def main():
@@ -177,10 +185,12 @@ def main():
     parser.add_argument("--log_interval", type=int, default=100)
     args = parser.parse_args()
 
+    writer = SummaryWriter("../logs/cifar10")
+
     # 前処理(学習用)
-    transform_train = transforms.Compose([transforms.ToTensor()])
+    transform_train = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     # 前処理(検証用)
-    transform_validate = transforms.Compose([transforms.ToTensor()])
+    transform_validate = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 
     # データセットの取得
     train_data_set = datasets.CIFAR10(args.datasets_dir, train=True, transform=transform_train, download=True)
@@ -198,17 +208,19 @@ def main():
     model = SimpleConvNet()
     loss_func = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    # optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.9, nesterov=True)
 
     best_acc = 0
+    train_log_step = 0
+    validate_log_step = 0
     for epoch in range(args.max_epoch):
-        train(args, train_data_loader, model, loss_func, optimizer, epoch)
-        epoch_acc = validate(args, validate_data_loader, model, loss_func, epoch)
-
-        # is_best = epoch_acc > best_acc
+        train_log_step = train(args, train_data_loader, model, loss_func, optimizer, epoch, writer, train_log_step)
+        epoch_acc, validate_log_step = validate(
+            args, validate_data_loader, model, loss_func, epoch, writer, validate_log_step
+        )
         best_acc = max(epoch_acc, best_acc)
 
     print("Best accuracy[{:.3f}%]".format(best_acc))
+    writer.close()
 
 
 if __name__ == "__main__":
