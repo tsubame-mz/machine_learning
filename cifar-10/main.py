@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 import argparse
 import time
+
+from models.simple_net import SimpleConvNet
+from models.simple_net import SimpleOctConvNet
 
 
 class AverageMeter:
@@ -33,58 +35,6 @@ def calc_accuracy(output_data, target_data):
     pred_idx = pred_idx.t().squeeze().cpu()
     correct = pred_idx.eq(target_data)  # 正解: 1, 不正解: 0
     return (correct.sum().float() / batch_size) * 100.0
-
-
-class Conv_BN_Act(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, bias=False):
-        super(Conv_BN_Act, self).__init__()
-        self.layers = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        return self.layers(x)
-
-
-class SimpleConvNet(nn.Module):
-    def __init__(self):
-        super(SimpleConvNet, self).__init__()
-        self.layers = nn.Sequential(
-            # (N, 3, 32, 32)
-            Conv_BN_Act(3, 16, 3),
-            # (N, 16, 32, 32)
-            Conv_BN_Act(16, 16, 3),
-            Conv_BN_Act(16, 16, 3),
-            nn.AvgPool2d(kernel_size=(2, 2), stride=2),
-            # (N, 16, 16, 16)
-            Conv_BN_Act(16, 16, 3),
-            Conv_BN_Act(16, 16, 3),
-            Conv_BN_Act(16, 16, 3),
-            nn.AvgPool2d(kernel_size=(2, 2), stride=2),
-            # (N, 16, 8, 8)
-            Conv_BN_Act(16, 16, 3),
-            Conv_BN_Act(16, 16, 3),
-            Conv_BN_Act(16, 16, 3),
-            nn.MaxPool2d(3, stride=1, padding=1),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            # (N, 16, 1, 1)
-        )
-        self.fc = nn.Linear(16, 10)
-        # (N, 10)
-
-        # ネットワークの重みを初期化
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x = self.layers(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return F.softmax(x, dim=-1)
 
 
 def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_step):
@@ -127,9 +77,10 @@ def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_ste
                     batch_time_avg.avg * args.log_interval,
                 )
             )
-            writer.add_scalar("train/loss", loss.item(), log_step)
-            writer.add_scalar("train/acc", acc.item(), log_step)
-            log_step += 1
+            if writer:
+                writer.add_scalar("train/loss", loss.item(), log_step)
+                writer.add_scalar("train/acc", acc.item(), log_step)
+                log_step += 1
     print("Acc(Train)[{:.3f}%], Time[{:.3f}s]".format(acc_avg.avg, batch_time_avg.sum))
     return log_step
 
@@ -170,9 +121,10 @@ def validate(args, data_loader, model, loss_func, epoch, writer, log_step):
                     batch_time_avg.avg * args.log_interval,
                 )
             )
-            writer.add_scalar("validate/loss", loss.item(), log_step)
-            writer.add_scalar("validate/acc", acc.item(), log_step)
-            log_step += 1
+            if writer:
+                writer.add_scalar("validate/loss", loss.item(), log_step)
+                writer.add_scalar("validate/acc", acc.item(), log_step)
+                log_step += 1
     print("Acc(Validate)[{:.3f}%], Time[{:.3f}s]".format(acc_avg.avg, batch_time_avg.sum))
     return acc_avg.avg, log_step
 
@@ -181,11 +133,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--datasets_dir", type=str, default="../datasets")
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--innter_channnels", type=int, default=64)
     parser.add_argument("--max_epoch", type=int, default=10)
     parser.add_argument("--log_interval", type=int, default=100)
+    parser.add_argument("--use_logfile", type=bool, default=True)
+    parser.add_argument("--use_octconv", type=bool, default=False)
     args = parser.parse_args()
 
-    writer = SummaryWriter("../logs/cifar10")
+    if args.use_logfile:
+        if args.use_octconv:
+            writer = SummaryWriter("../logs/cifar10-octconv")
+        else:
+            writer = SummaryWriter("../logs/cifar10")
+    else:
+        writer = None
 
     # 前処理(学習用)
     transform_train = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
@@ -205,7 +166,11 @@ def main():
     )
 
     # モデル定義
-    model = SimpleConvNet()
+    if args.use_octconv:
+        model = SimpleOctConvNet(args.innter_channnels)
+    else:
+        model = SimpleConvNet(args.innter_channnels)
+    print(model)
     loss_func = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
@@ -220,7 +185,8 @@ def main():
         best_acc = max(epoch_acc, best_acc)
 
     print("Best accuracy[{:.3f}%]".format(best_acc))
-    writer.close()
+    if writer:
+        writer.close()
 
 
 if __name__ == "__main__":
