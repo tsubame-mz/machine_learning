@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
@@ -37,7 +38,7 @@ def calc_accuracy(output_data, target_data):
     return (correct.sum().float() / batch_size) * 100.0
 
 
-def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_step):
+def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_step, device):
     # 学習モード
     model.train()
 
@@ -48,8 +49,8 @@ def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_ste
     for i, (input_data, target_data) in enumerate(data_loader):
         start_time = time.perf_counter()
 
-        output_data = model(input_data)
-        loss = loss_func(output_data, target_data)
+        output_data = model(input_data.to(device))
+        loss = loss_func(output_data, target_data.to(device))
         loss_avg.update(loss.item(), target_data.size(0))
 
         acc = calc_accuracy(output_data.data, target_data)
@@ -85,7 +86,7 @@ def train(args, data_loader, model, loss_func, optimizer, epoch, writer, log_ste
     return log_step
 
 
-def validate(args, data_loader, model, loss_func, epoch, writer, log_step):
+def validate(args, data_loader, model, loss_func, epoch, writer, log_step, device):
     # 評価モード
     model.eval()
 
@@ -96,8 +97,8 @@ def validate(args, data_loader, model, loss_func, epoch, writer, log_step):
     for i, (input_data, target_data) in enumerate(data_loader):
         start_time = time.perf_counter()
 
-        output_data = model(input_data)
-        loss = loss_func(output_data, target_data)
+        output_data = model(input_data.to(device))
+        loss = loss_func(output_data, target_data.to(device))
         loss_avg.update(loss.item(), target_data.size(0))
 
         acc = calc_accuracy(output_data.data, target_data)
@@ -137,8 +138,9 @@ def main():
     parser.add_argument("--max_epoch", type=int, default=10)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--use_logfile", type=bool, default=True)
-    parser.add_argument("--use_octconv", type=bool, default=False)
-    args = parser.parse_args()
+    parser.add_argument("--use_octconv", type=bool, default=True)
+    parser.add_argument("--use_gpu", type=bool, default=True)
+    args = parser.parse_args(args=[])
 
     if args.use_logfile:
         if args.use_octconv:
@@ -148,8 +150,26 @@ def main():
     else:
         writer = None
 
+    # サポート対象のGPUがあれば使う
+    if args.use_gpu:
+        print("Check GPU available")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cpu")
+    if device == "cuda":
+        torch.backends.cudnn.benchmark = True
+    print("Use devide: {}".format(device))
+
     # 前処理(学習用)
-    transform_train = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+    transform_train = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: F.pad(x.unsqueeze(0), (4, 4, 4, 4), mode='reflect').squeeze()),  # パディング
+        transforms.ToPILImage(),
+        transforms.RandomCrop(32),              # ランダムでピクセル欠け
+        transforms.RandomHorizontalFlip(),      # ランダムで上下反転
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ])
     # 前処理(検証用)
     transform_validate = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 
@@ -171,6 +191,7 @@ def main():
     else:
         model = SimpleConvNet(args.innter_channnels)
     print(model)
+    model.to(device)
     loss_func = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
@@ -178,9 +199,9 @@ def main():
     train_log_step = 0
     validate_log_step = 0
     for epoch in range(args.max_epoch):
-        train_log_step = train(args, train_data_loader, model, loss_func, optimizer, epoch, writer, train_log_step)
+        train_log_step = train(args, train_data_loader, model, loss_func, optimizer, epoch, writer, train_log_step, device)
         epoch_acc, validate_log_step = validate(
-            args, validate_data_loader, model, loss_func, epoch, writer, validate_log_step
+            args, validate_data_loader, model, loss_func, epoch, writer, validate_log_step, device
         )
         best_acc = max(epoch_acc, best_acc)
 
