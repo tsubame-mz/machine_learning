@@ -158,7 +158,7 @@ def main():
         device = torch.device("cpu")
     if device == "cuda":
         torch.backends.cudnn.benchmark = True
-    print("Use devide: {}".format(device))
+    print("Use device: {}".format(device))
 
     # 前処理(学習用)
     transform_train = transforms.Compose([
