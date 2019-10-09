@@ -5,7 +5,7 @@ from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 import numpy as np
 import gym
 from gym.core import Wrapper
-from gym.core import RewardWrapper
+from gym.core import RewardWrapper, ObservationWrapper
 from collections import deque
 import argparse
 import os
@@ -61,6 +61,22 @@ class CartPoleRewardWrapper(RewardWrapper):
         return reward
 
 
+class OnehotObservationWrapper(ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        assert isinstance(self.observation_space, gym.spaces.Discrete)
+        self.in_features = self.observation_space.n
+
+    def reset(self, **kwargs):
+        return super().reset(**kwargs)
+
+    def observation(self, obs):
+        return self.one_hot(obs)
+
+    def one_hot(self, index):
+        return np.eye(self.in_features)[index]
+
+
 class PVNet(nn.Module):
     def __init__(self, observation_space, action_space, args):
         super(PVNet, self).__init__()
@@ -69,7 +85,6 @@ class PVNet(nn.Module):
         droprate = args.droprate
 
         # in
-        self.emb = None
         if isinstance(observation_space, gym.spaces.Box):
             in_features = observation_space.shape[0]
         elif isinstance(observation_space, gym.spaces.Discrete):
@@ -79,13 +94,12 @@ class PVNet(nn.Module):
             out_features = action_space.n
         print("in_features[{}], out_features[{}]".format(in_features, out_features))
 
-        if isinstance(observation_space, gym.spaces.Discrete):
-            self.emb = nn.Sequential(nn.Embedding(in_features, hid_num), nn.Linear(hid_num, hid_num))
-            in_features = hid_num
-
         # 共通ネットワーク
         self.layer = nn.Sequential(
             nn.Linear(in_features, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=droprate),
+            nn.Linear(hid_num, hid_num),
             nn.ReLU(inplace=True),
             nn.Dropout(p=droprate),
             nn.Linear(hid_num, hid_num),
@@ -106,9 +120,7 @@ class PVNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        if self.emb:
-            x = self.emb(x.long())
-        h = self.layer(x.float())
+        h = self.layer(x)
         return self.policy(h), self.value(h)
 
 
@@ -124,10 +136,11 @@ class PPOAgent:
         self.ent_c = args.ent_c
         self.max_grad_norm = args.max_grad_norm
         self.adv_eps = args.adv_eps
-        self.minibatch_size_rnn = args.minibatch_size_rnn
+        self.minibatch_size_seq = args.minibatch_size_seq
+        self.use_minibatch_seq = args.use_minibatch_seq
 
     def get_action(self, obs):
-        obs = torch.from_numpy(np.array(obs)).to(self.device)
+        obs = torch.from_numpy(np.array(obs)).float().to(self.device)
         pi, value = self.model(obs)
         c = Categorical(pi)
         action = c.sample()
@@ -135,8 +148,10 @@ class PPOAgent:
         return action.squeeze().item(), value.item(), c.log_prob(action).item()
 
     def train(self, rollouts):
-        iterate = rollouts.iterate(self.minibatch_size, self.opt_epochs)
-        # iterate = rollouts.iterate_rnn(self.minibatch_size_rnn, self.opt_epochs)
+        if self.use_minibatch_seq:
+            iterate = rollouts.iterate_seq(self.minibatch_size, self.opt_epochs)
+        else:
+            iterate = rollouts.iterate(self.minibatch_size, self.opt_epochs)
         loss_vals = []
         for batch in iterate:
             loss_vals.append(self.train_batch(batch))
@@ -272,7 +287,7 @@ class RolloutStorage:
                 )
                 yield batch
 
-    def iterate_rnn(self, batch_size, epoch):
+    def iterate_seq(self, batch_size, epoch):
         self.to_ndarray()
         sampler = BatchSampler(SubsetRandomSampler(range(len(self.seq_indices))), batch_size, drop_last=False)
         for _ in range(epoch):
@@ -316,30 +331,30 @@ class RolloutStorage:
 def main():
     parser = argparse.ArgumentParser()
     # 環境関係
-    parser.add_argument("--env", type=str, default="CartPole-v0")
+    # parser.add_argument("--env", type=str, default="CartPole-v0")
     # parser.add_argument("--env", type=str, default="FrozenLake-v0")
-    # parser.add_argument("--env", type=str, default="Taxi-v2")
+    parser.add_argument("--env", type=str, default="Taxi-v2")
     parser.add_argument("--use_gpu", type=bool, default=True)
-    parser.add_argument("--rew_queue_size", type=int, default=100)
     parser.add_argument("--use_seed", type=int, default=False)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--resume", type=bool, default=True)
     parser.add_argument("--test_epochs", type=int, default=10)
     parser.add_argument("--render_env", type=bool, default=False)
     # ネットワーク関係
-    parser.add_argument("--hid_num", type=int, default=64)
+    parser.add_argument("--hid_num", type=int, default=128)
     parser.add_argument("--droprate", type=float, default=0.2)
     # メモリ関係
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--lam", type=float, default=0.95)
     parser.add_argument("--adv_eps", type=float, default=1e-8)
     # 学習関係
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-6)
     parser.add_argument("--train_epochs", type=int, default=1000)
     parser.add_argument("--sample_episodes", type=int, default=10)
     parser.add_argument("--opt_epochs", type=int, default=3)
-    parser.add_argument("--minibatch_size", type=int, default=32)
-    parser.add_argument("--minibatch_size_rnn", type=int, default=4)
+    parser.add_argument("--use_minibatch_seq", type=bool, default=False)
+    parser.add_argument("--minibatch_size", type=int, default=64)
+    parser.add_argument("--minibatch_size_seq", type=int, default=4)
     parser.add_argument("--clip_ratio", type=float, default=0.2)
     parser.add_argument("--v_loss_c", type=float, default=0.9)
     parser.add_argument("--ent_c", type=float, default=1e-3)
@@ -379,6 +394,8 @@ def main():
     env.seed(env_seed)
     if args.env == "CartPole-v0":
         env = CartPoleRewardWrapper(env)
+    if args.env in ["FrozenLake-v0", "Taxi-v2"]:
+        env = OnehotObservationWrapper(env)
     env = EnvMonitor(env)
 
     model = PVNet(env.observation_space, env.action_space, args)
@@ -400,12 +417,13 @@ def main():
             load_data = torch.load(last_model_filename)
             model.load_state_dict(load_data["state_dict"])
             max_rew = load_data["max_rew"]
+            print("Max reward: {0}".format(max_rew))
         else:
             print("Model file not found")
 
     print("Train start")
     try:
-        episode_rewards = deque(maxlen=args.rew_queue_size)
+        episode_rewards = deque(maxlen=args.sample_episodes)
         for epoch in range(args.train_epochs):
             model.eval()  # 評価モード
             for episode in range(args.sample_episodes):
