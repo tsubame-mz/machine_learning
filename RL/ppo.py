@@ -4,77 +4,12 @@ from torch.distributions import Categorical
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 import numpy as np
 import gym
-from gym.core import Wrapper
-from gym.core import RewardWrapper, ObservationWrapper
 from collections import deque
 import argparse
 import os
 
-
-class EnvMonitor(Wrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        self._reset_state()
-
-    def reset(self, **kwargs):
-        self._reset_state()
-        return self.env.reset(**kwargs)
-
-    def step(self, action):
-        ob, rew, done, info = self.env.step(action)
-        self._update(ob, rew, done, info)
-        return (ob, rew, done, info)
-
-    def _reset_state(self):
-        self.rewards = []
-
-    def _update(self, ob, rew, done, info):
-        self.rewards.append(rew)
-        if done:
-            eprew = sum(self.rewards)
-            eplen = len(self.rewards)
-            epinfo = {"r": round(eprew, 6), "l": eplen}
-            if isinstance(info, dict):
-                info["episode"] = epinfo
-
-
-class CartPoleRewardWrapper(RewardWrapper):
-    def reset(self, **kwargs):
-        self.step_cnt = 0
-        self.done = False
-        return super().reset(**kwargs)
-
-    def step(self, action):
-        ob, rew, self.done, info = self.env.step(action)
-        self.step_cnt += 1
-        return ob, self.reward(rew), self.done, info
-
-    def reward(self, reward):
-        reward = 0
-        if self.done:
-            if self.step_cnt >= 195:
-                # 195ステップ以上立てていたらOK
-                reward = +1
-            else:
-                # 途中で転んでいたらNG
-                reward = -1
-        return reward
-
-
-class OnehotObservationWrapper(ObservationWrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        assert isinstance(self.observation_space, gym.spaces.Discrete)
-        self.in_features = self.observation_space.n
-
-    def reset(self, **kwargs):
-        return super().reset(**kwargs)
-
-    def observation(self, obs):
-        return self.one_hot(obs)
-
-    def one_hot(self, index):
-        return np.eye(self.in_features)[index]
+from utils import _windows_enable_ANSI
+from env_wrapper import CartPoleRewardWrapper, OnehotObservationWrapper, EnvMonitor
 
 
 class PVNet(nn.Module):
@@ -339,7 +274,7 @@ def main():
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--resume", type=bool, default=True)
     parser.add_argument("--test_epochs", type=int, default=10)
-    parser.add_argument("--render_env", type=bool, default=False)
+    parser.add_argument("--render_env", type=bool, default=True)
     # ネットワーク関係
     parser.add_argument("--hid_num", type=int, default=128)
     parser.add_argument("--droprate", type=float, default=0.2)
@@ -489,15 +424,22 @@ def main():
             obs = env.reset()
             done = False
             episode_reward = 0
+            step = 0
+            if args.render_env:
+                print("-- env[{0:02d}:{1:03d}] ".format(epoch + 1, step) + "-" * 30)
+                env.render()
             while not done:
-                if args.render_env:
-                    env.render()
                 action, value, log_pi = agent.get_action(obs)
                 next_obs, reward, done, info = env.step(action)
                 episode_reward += reward
                 obs = next_obs
-            if args.render_env:
-                env.render()
+
+                step += 1
+                if args.render_env:
+                    print("-- env[{0:02d}:{1:03d}] ".format(epoch + 1, step) + "-" * 30)
+                    env.render()
+                    print(info)
+
             episode_reward = np.mean(episode_reward)
             test_reward.append(episode_reward)
             print("Epoch[{:3d}], ".format(epoch + 1), end="")
@@ -510,4 +452,5 @@ def main():
 
 
 if __name__ == "__main__":
+    # _windows_enable_ANSI()
     main()
