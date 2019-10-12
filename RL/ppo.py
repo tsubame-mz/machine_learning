@@ -1,7 +1,4 @@
 import torch
-import torch.nn as nn
-from torch.distributions import Categorical
-from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 import numpy as np
 import gym
 from collections import deque
@@ -10,257 +7,9 @@ import os
 
 from utils import _windows_enable_ANSI
 from env_wrapper import CartPoleRewardWrapper, OnehotObservationWrapper, EnvMonitor
-
-
-class PVNet(nn.Module):
-    def __init__(self, observation_space, action_space, args):
-        super(PVNet, self).__init__()
-
-        hid_num = args.hid_num
-        droprate = args.droprate
-
-        # in
-        if isinstance(observation_space, gym.spaces.Box):
-            in_features = observation_space.shape[0]
-        elif isinstance(observation_space, gym.spaces.Discrete):
-            in_features = observation_space.n
-        # out
-        if isinstance(action_space, gym.spaces.Discrete):
-            out_features = action_space.n
-        print("in_features[{}], out_features[{}]".format(in_features, out_features))
-
-        # 共通ネットワーク
-        self.layer = nn.Sequential(
-            nn.Linear(in_features, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=droprate),
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=droprate),
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=droprate),
-        )
-
-        # Policy : 各行動の確率を出力
-        self.policy = nn.Sequential(nn.Linear(hid_num, out_features), nn.Softmax(dim=-1))
-
-        # Value : 状態の価値を出力
-        self.value = nn.Sequential(nn.Linear(hid_num, 1))
-
-        # ネットワークの重みを初期化
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        h = self.layer(x)
-        return self.policy(h), self.value(h)
-
-
-class PPOAgent:
-    def __init__(self, model, optimizer, device, args):
-        self.model = model
-        self.optimizer = optimizer
-        self.device = device
-        self.minibatch_size = args.minibatch_size
-        self.opt_epochs = args.opt_epochs
-        self.clip_ratio = args.clip_ratio
-        self.v_loss_c = args.v_loss_c
-        self.ent_c = args.ent_c
-        self.max_grad_norm = args.max_grad_norm
-        self.adv_eps = args.adv_eps
-        self.minibatch_size_seq = args.minibatch_size_seq
-        self.use_minibatch_seq = args.use_minibatch_seq
-
-    def get_action(self, obs):
-        obs = torch.from_numpy(np.array(obs)).float().to(self.device)
-        pi, value = self.model(obs)
-        c = Categorical(pi)
-        action = c.sample()
-        # Action, Value, llh(pi(a|s)の対数)
-        return action.squeeze().item(), value.item(), c.log_prob(action).item()
-
-    def train(self, rollouts):
-        if self.use_minibatch_seq:
-            iterate = rollouts.iterate_seq(self.minibatch_size, self.opt_epochs)
-        else:
-            iterate = rollouts.iterate(self.minibatch_size, self.opt_epochs)
-        loss_vals = []
-        for batch in iterate:
-            loss_vals.append(self.train_batch(batch))
-        loss_vals = np.mean(loss_vals, axis=0)
-        return loss_vals
-
-    def train_batch(self, batch):
-        obs, actions, _, _, log_pis, returns, advantages, = batch
-        obs = torch.FloatTensor(obs).to(self.device)
-        actions = torch.FloatTensor(actions).to(self.device)
-        log_pis = torch.FloatTensor(log_pis).to(self.device)
-        returns = torch.FloatTensor(returns).to(self.device)
-        advantages = torch.FloatTensor(advantages).to(self.device)
-
-        # Advantageを標準化(平均0, 分散1)
-        if len(advantages) > 1:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + self.adv_eps)
-
-        pi, value = self.model(obs)
-        c = Categorical(pi)
-        new_log_pi = c.log_prob(actions)
-        ratio = (new_log_pi - log_pis).exp()  # pi(a|s) / pi_old(a|s)
-        clip_adv = torch.where(advantages >= 0, (1 + self.clip_ratio) * advantages, (1 - self.clip_ratio) * advantages)
-        pi_loss = -(torch.min(ratio * advantages, clip_adv)).mean()
-        v_loss = self.v_loss_c * 0.5 * (returns - value).pow(2).mean()
-        entropy = self.ent_c * c.entropy().mean()
-        toral_loss = pi_loss + v_loss + entropy
-
-        self.optimizer.zero_grad()
-        toral_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-        self.optimizer.step()
-        return pi_loss.item(), v_loss.item(), entropy.item(), toral_loss.item()
-
-
-class PPOBuffer:
-    def __init__(self, args):
-        self.gamma = args.gamma
-        self.lam = args.lam
-        self.initialize()
-
-    def initialize(self):
-        self.obs = []
-        self.actions = []
-        self.rewards = []
-        self.values = []
-        self.log_pis = []
-        self.returns = []
-        self.advantages = []
-
-    def add(self, obs, action, reward, value, log_pi):
-        self.obs.append(obs)
-        self.actions.append(action)
-        self.rewards.append(reward)
-        self.values.append(value)
-        self.log_pis.append(log_pi)
-
-    def finish_path(self):
-        values = np.append(self.values, 0)
-        last_delta = 0
-        reward_size = len(self.rewards)
-        self.returns = np.zeros(reward_size)
-        self.advantages = np.zeros(reward_size)
-        for t in reversed(range(reward_size)):
-            # Advantage
-            # GAE(General Advantage Estimation)
-            delta = self.rewards[t] + self.gamma * values[t + 1] - values[t]
-            last_delta = delta + (self.gamma * self.lam) * last_delta
-            self.advantages[t] = last_delta
-
-            # Return
-            self.returns[t] = self.advantages[t] + values[t]
-
-    def get_all(self):
-        return (self.obs, self.actions, self.rewards, self.values, self.log_pis, self.returns, self.advantages)
-
-
-class RolloutStorage:
-    def __init__(self):
-        self.initialize()
-
-    def initialize(self):
-        self.obs = []
-        self.actions = []
-        self.rewards = []
-        self.values = []
-        self.log_pis = []
-        self.returns = []
-        self.advantages = []
-        self.seq_indices = []
-
-    def append(self, local_buf: PPOBuffer):
-        obs, actions, rewards, values, log_pis, returns, advantages = local_buf.get_all()
-
-        # シーケンスの開始/終了インデックスを保持
-        self.seq_indices.append([len(self.rewards), len(self.rewards) + len(rewards)])
-
-        self.obs.extend(obs)
-        self.actions.extend(actions)
-        self.rewards.extend(rewards)
-        self.values.extend(values)
-        self.log_pis.extend(log_pis)
-        self.returns.extend(returns)
-        self.advantages.extend(advantages)
-
-    def to_ndarray(self):
-        self.obs = np.array(self.obs)
-        self.actions = np.array(self.actions)
-        self.rewards = np.array(self.rewards)
-        self.values = np.array(self.values)
-        self.log_pis = np.array(self.log_pis)
-        self.returns = np.array(self.returns)
-        self.advantages = np.array(self.advantages)
-        self.seq_indices = np.array(self.seq_indices)
-
-    def get_all(self):
-        self.to_ndarray()
-        return (self.obs, self.actions, self.rewards, self.values, self.log_pis, self.returns, self.advantages)
-
-    def iterate(self, batch_size, epoch):
-        self.to_ndarray()
-        sampler = BatchSampler(SubsetRandomSampler(range(len(self.rewards))), batch_size, drop_last=False)
-        for _ in range(epoch):
-            for indices in sampler:
-                batch = (
-                    self.obs[indices],
-                    self.actions[indices],
-                    self.rewards[indices],
-                    self.values[indices],
-                    self.log_pis[indices],
-                    self.returns[indices],
-                    self.advantages[indices],
-                )
-                yield batch
-
-    def iterate_seq(self, batch_size, epoch):
-        self.to_ndarray()
-        sampler = BatchSampler(SubsetRandomSampler(range(len(self.seq_indices))), batch_size, drop_last=False)
-        for _ in range(epoch):
-            for indices in sampler:
-                batch_obs = []
-                batch_actions = []
-                batch_rewards = []
-                batch_values = []
-                batch_log_pis = []
-                batch_returns = []
-                batch_advantages = []
-                for seq_indices in self.seq_indices[indices]:
-                    # ランダムで選ばれたシーケンスだけ取り出す
-                    batch_obs.extend(self.obs[seq_indices[0] : seq_indices[1]])
-                    batch_actions.extend(self.actions[seq_indices[0] : seq_indices[1]])
-                    batch_rewards.extend(self.rewards[seq_indices[0] : seq_indices[1]])
-                    batch_values.extend(self.values[seq_indices[0] : seq_indices[1]])
-                    batch_log_pis.extend(self.log_pis[seq_indices[0] : seq_indices[1]])
-                    batch_returns.extend(self.returns[seq_indices[0] : seq_indices[1]])
-                    batch_advantages.extend(self.advantages[seq_indices[0] : seq_indices[1]])
-                # ndarrayに変換
-                batch_obs = np.array(batch_obs)
-                batch_actions = np.array(batch_actions)
-                batch_rewards = np.array(batch_rewards)
-                batch_values = np.array(batch_values)
-                batch_log_pis = np.array(batch_log_pis)
-                batch_returns = np.array(batch_returns)
-                batch_advantages = np.array(batch_advantages)
-                batch = (
-                    batch_obs,
-                    batch_actions,
-                    batch_rewards,
-                    batch_values,
-                    batch_log_pis,
-                    batch_returns,
-                    batch_advantages,
-                )
-                yield batch
+from model import PVNet
+from memory import PPOBuffer, RolloutStorage
+from agent import PPOAgent
 
 
 def main():
@@ -295,7 +44,7 @@ def main():
     parser.add_argument("--ent_c", type=float, default=1e-3)
     parser.add_argument("--max_grad_norm", type=float, default=0.5)
     # ログ関係
-    parser.add_argument("--log", type=str, default="logs")
+    parser.add_argument("--data", type=str, default="data")
     args = parser.parse_args(args=[])
 
     # サポート対象のGPUがあれば使う
@@ -308,13 +57,13 @@ def main():
         torch.backends.cudnn.benchmark = True
     print("Use device: {}".format(device))
 
-    # ログ用フォルダ生成
-    if not os.path.exists(args.log):
-        print("Create directory: {0}".format(args.log))
-        os.mkdir(args.log)
-    if not os.path.exists(os.path.join(args.log, "models")):
-        print("Create directory: {0}".format(os.path.join(args.log, "models")))
-        os.mkdir(os.path.join(args.log, "models"))
+    # モデル保存用フォルダ生成
+    if not os.path.exists(args.data):
+        print("Create directory: {0}".format(args.data))
+        os.mkdir(args.data)
+    if not os.path.exists(os.path.join(args.data, "models")):
+        print("Create directory: {0}".format(os.path.join(args.data, "models")))
+        os.mkdir(os.path.join(args.data, "models"))
 
     # 乱数固定化
     env_seed = None
@@ -343,13 +92,13 @@ def main():
 
     # モデルの途中状態を読込む
     max_rew = -1e6
-    last_model_filename = os.path.join(args.log, "models", "model_last.pkl")
-    best_model_filename = os.path.join(args.log, "models", "model_best.pkl")
+    last_model_filename = os.path.join(args.data, "models", "model_last_" + args.env + ".pkl")
+    best_model_filename = os.path.join(args.data, "models", "model_best_" + args.env + ".pkl")
     if args.resume:
         print("Load model params")
         if os.path.exists(last_model_filename):
             # load last model
-            load_data = torch.load(last_model_filename)
+            load_data = torch.load(last_model_filename, map_location=device)
             model.load_state_dict(load_data["state_dict"])
             max_rew = load_data["max_rew"]
             print("Max reward: {0}".format(max_rew))
