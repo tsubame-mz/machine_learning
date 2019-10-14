@@ -6,7 +6,7 @@ import argparse
 import os
 
 from utils import _windows_enable_ANSI
-from env_wrapper import CartPoleRewardWrapper, EnvMonitor
+from env_wrapper import EnvMonitor
 from model import PVNet
 from memory import PPOBuffer, RolloutStorage
 from agent import PPOAgent
@@ -24,7 +24,6 @@ def main():
     parser.add_argument("--render_env", type=bool, default=True)
     # ネットワーク関係
     parser.add_argument("--hid_num", type=int, default=128)
-    parser.add_argument("--droprate", type=float, default=0.2)
     # メモリ関係
     parser.add_argument("--gamma", type=float, default=0.99)  # 0.8～0.99
     parser.add_argument("--lam", type=float, default=0.95)  # 0.9～1.0
@@ -39,9 +38,9 @@ def main():
     parser.add_argument("--minibatch_size_seq", type=int, default=4)
     parser.add_argument("--clip_ratio", type=float, default=0.2)  # 0.1～0.3
     parser.add_argument("--v_loss_c", type=float, default=0.9)  # 0.5～1.0
-    parser.add_argument("--start_ent_c", type=float, default=10.0)
+    parser.add_argument("--start_ent_c", type=float, default=1.0)
     parser.add_argument("--end_ent_c", type=float, default=0.01)  # 0～0.01
-    parser.add_argument("--tau_ent_c", type=float, default=500.0)
+    parser.add_argument("--tau_ent_c", type=float, default=1000.0)
     parser.add_argument("--max_grad_norm", type=float, default=0.5)
     # ログ関係
     parser.add_argument("--data", type=str, default="data")
@@ -78,8 +77,6 @@ def main():
     env = gym.make(args.env)
     # env = gym.make(args.env, is_slippery=False)   # FrozenLake
     env.seed(env_seed)
-    if args.env == "CartPole-v0":
-        env = CartPoleRewardWrapper(env)
     env = EnvMonitor(env)
 
     pv_net = PVNet(env.observation_space, env.action_space, args)

@@ -7,7 +7,6 @@ class PVNet(nn.Module):
         super(PVNet, self).__init__()
 
         hid_num = args.hid_num
-        droprate = args.droprate
 
         # in
         if isinstance(observation_space, gym.spaces.Box):
@@ -20,26 +19,13 @@ class PVNet(nn.Module):
         print("in_features[{}], out_features[{}]".format(in_features, out_features))
 
         # 共通ネットワーク
-        self.layer = nn.Sequential(
-            nn.Embedding(in_features, hid_num),
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=droprate),
-        )
+        self.layer = nn.Sequential(nn.Embedding(in_features, hid_num))
 
         # Policy : 各行動の確率を出力
-        self.policy = nn.Sequential(
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=droprate),
-            nn.Linear(hid_num, out_features),
-            nn.Softmax(dim=-1),
-        )
+        self.policy = nn.Sequential(nn.Linear(hid_num, out_features), nn.Softmax(dim=-1))
 
         # Value : 状態の価値を出力
-        self.value = nn.Sequential(
-            nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True), nn.Dropout(p=droprate), nn.Linear(hid_num, 1)
-        )
+        self.value = nn.Sequential(nn.Linear(hid_num, 1))
 
         # ネットワークの重みを初期化
         for m in self.modules():

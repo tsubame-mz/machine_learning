@@ -29,27 +29,3 @@ class EnvMonitor(Wrapper):
             epinfo = {"r": round(eprew, 6), "l": eplen}
             if isinstance(info, dict):
                 info["episode"] = epinfo
-
-
-class CartPoleRewardWrapper(RewardWrapper):
-    def reset(self, **kwargs):
-        self.step_cnt = 0
-        self.done = False
-        return super().reset(**kwargs)
-
-    def step(self, action):
-        ob, rew, self.done, info = self.env.step(action)
-        self.step_cnt += 1
-        return ob, self.reward(rew), self.done, info
-
-    def reward(self, reward):
-        reward = 0
-        if self.done:
-            if self.step_cnt >= 195:
-                # 195ステップ以上立てていたらOK
-                reward = +1
-            else:
-                # 途中で転んでいたらNG
-                reward = -1
-        return reward
-
