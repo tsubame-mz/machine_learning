@@ -53,18 +53,3 @@ class CartPoleRewardWrapper(RewardWrapper):
                 reward = -1
         return reward
 
-
-class OnehotObservationWrapper(ObservationWrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        assert isinstance(self.observation_space, gym.spaces.Discrete)
-        self.in_features = self.observation_space.n
-
-    def reset(self, **kwargs):
-        return super().reset(**kwargs)
-
-    def observation(self, obs):
-        return self.one_hot(obs)
-
-    def one_hot(self, index):
-        return np.eye(self.in_features)[index]

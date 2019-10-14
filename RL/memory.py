@@ -27,6 +27,7 @@ class PPOBuffer:
     def finish_path(self):
         values = np.append(self.values, 0)
         last_delta = 0
+        last_rew = 0
         reward_size = len(self.rewards)
         self.returns = np.zeros(reward_size)
         self.advantages = np.zeros(reward_size)
@@ -38,15 +39,17 @@ class PPOBuffer:
             self.advantages[t] = last_delta
 
             # Return
-            self.returns[t] = self.advantages[t] + values[t]
+            last_rew = self.rewards[t] + self.gamma * last_rew
+            self.returns[t] = last_rew
 
     def get_all(self):
         return (self.obs, self.actions, self.rewards, self.values, self.log_pis, self.returns, self.advantages)
 
 
 class RolloutStorage:
-    def __init__(self):
+    def __init__(self, args):
         self.initialize()
+        self.adv_eps = args.adv_eps
 
     def initialize(self):
         self.obs = []
@@ -58,7 +61,7 @@ class RolloutStorage:
         self.advantages = []
         self.seq_indices = []
 
-    def append(self, local_buf: PPOBuffer):
+    def append(self, local_buf):
         obs, actions, rewards, values, log_pis, returns, advantages = local_buf.get_all()
 
         # シーケンスの開始/終了インデックスを保持
@@ -72,6 +75,12 @@ class RolloutStorage:
         self.returns.extend(returns)
         self.advantages.extend(advantages)
 
+    def finish_path(self):
+        self.to_ndarray()
+        # Advantageを標準化(平均0, 分散1)
+        if len(self.advantages) > 1:
+            self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + self.adv_eps)
+
     def to_ndarray(self):
         self.obs = np.array(self.obs)
         self.actions = np.array(self.actions)
@@ -83,12 +92,10 @@ class RolloutStorage:
         self.seq_indices = np.array(self.seq_indices)
 
     def get_all(self):
-        self.to_ndarray()
         return (self.obs, self.actions, self.rewards, self.values, self.log_pis, self.returns, self.advantages)
 
-    def iterate(self, batch_size, epoch):
-        self.to_ndarray()
-        sampler = BatchSampler(SubsetRandomSampler(range(len(self.rewards))), batch_size, drop_last=False)
+    def iterate(self, batch_size, epoch, drop_last=False):
+        sampler = BatchSampler(SubsetRandomSampler(range(len(self.rewards))), batch_size, drop_last=drop_last)
         for _ in range(epoch):
             for indices in sampler:
                 batch = (

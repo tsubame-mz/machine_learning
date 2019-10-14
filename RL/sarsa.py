@@ -12,7 +12,6 @@ from datetime import datetime
 
 def calc_temperature(step, max_t, min_t, tau):
     return (max_t - min_t) * math.exp(-step / tau) + min_t
-    # return (max_t - min_t) / math.exp(step * tau) + min_t
 
 
 def sarsa(q_value, state, action, reward, next_state, next_action, eta, gamma):
