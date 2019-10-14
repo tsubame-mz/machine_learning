@@ -7,7 +7,7 @@ import os
 
 from utils import _windows_enable_ANSI
 from env_wrapper import CartPoleRewardWrapper, EnvMonitor
-from model import PNet, VNet
+from model import PVNet
 from memory import PPOBuffer, RolloutStorage
 from agent import PPOAgent
 
@@ -15,8 +15,6 @@ from agent import PPOAgent
 def main():
     parser = argparse.ArgumentParser()
     # 環境関係
-    # parser.add_argument("--env", type=str, default="CartPole-v0")
-    # parser.add_argument("--env", type=str, default="FrozenLake-v0")
     parser.add_argument("--env", type=str, default="Taxi-v2")
     parser.add_argument("--use_gpu", type=bool, default=True)
     parser.add_argument("--use_seed", type=int, default=False)
@@ -43,8 +41,8 @@ def main():
     parser.add_argument("--v_loss_c", type=float, default=0.9)  # 0.5～1.0
     parser.add_argument("--start_ent_c", type=float, default=10.0)
     parser.add_argument("--end_ent_c", type=float, default=0.01)  # 0～0.01
-    parser.add_argument("--tau_ent_c", type=float, default=10.0)
-    parser.add_argument("--max_grad_norm", type=float, default=10)
+    parser.add_argument("--tau_ent_c", type=float, default=500.0)
+    parser.add_argument("--max_grad_norm", type=float, default=0.5)
     # ログ関係
     parser.add_argument("--data", type=str, default="data")
     # parser.add_argument("--data", type=str, default="/content/drive/My Drive/data")
@@ -84,15 +82,11 @@ def main():
         env = CartPoleRewardWrapper(env)
     env = EnvMonitor(env)
 
-    pol_net = PNet(env.observation_space, env.action_space, args)
-    val_net = VNet(env.observation_space, args)
-    print(pol_net)
-    print(val_net)
-    pol_net.to(device)
-    val_net.to(device)
-    optim_pol = torch.optim.Adam(pol_net.parameters(), lr=args.lr)
-    optim_val = torch.optim.Adam(val_net.parameters(), lr=args.lr)
-    agent = PPOAgent(pol_net, val_net, optim_pol, optim_val, device, args)
+    pv_net = PVNet(env.observation_space, env.action_space, args)
+    print(pv_net)
+    pv_net.to(device)
+    optimizer = torch.optim.Adam(pv_net.parameters(), lr=args.lr)
+    agent = PPOAgent(pv_net, optimizer, device, args)
     local_buf = PPOBuffer(args)
     rollouts = RolloutStorage(args)
 
@@ -120,8 +114,7 @@ def main():
 
         if load_filename:
             load_data = torch.load(load_filename, map_location=device)
-            pol_net.load_state_dict(load_data["state_dict_pol"])
-            val_net.load_state_dict(load_data["state_dict_val"])
+            pv_net.load_state_dict(load_data["state_dict_pv"])
             max_rew = load_data["max_rew"]
             print("Max reward: {0}".format(max_rew))
         else:
@@ -132,8 +125,7 @@ def main():
         episode_rewards = deque(maxlen=args.sample_episodes)
         for epoch in range(args.train_epochs):
             # 評価モード
-            pol_net.eval()
-            val_net.eval()
+            pv_net.eval()
             for episode in range(args.sample_episodes):
                 obs = env.reset()
                 done = False
@@ -152,8 +144,7 @@ def main():
                 local_buf.initialize()
 
             # 学習モード
-            pol_net.train()
-            val_net.train()
+            pv_net.train()
             rollouts.finish_path()
             pi_loss, v_loss, entropy = agent.train(rollouts)
             rollouts.initialize()
@@ -170,21 +161,13 @@ def main():
                 max_rew = mean_rew
                 # save best model
                 print("Save best model")
-                save_data = {
-                    "state_dict_pol": pol_net.state_dict(),
-                    "state_dict_val": val_net.state_dict(),
-                    "max_rew": max_rew,
-                }
+                save_data = {"state_dict_pv": pv_net.state_dict(), "max_rew": max_rew}
                 torch.save(save_data, best_model_filename)
 
             if ((epoch + 1) % 100) == 0:
                 # save checkpoint model
                 print("Save checkpoint model")
-                save_data = {
-                    "state_dict_pol": pol_net.state_dict(),
-                    "state_dict_val": val_net.state_dict(),
-                    "max_rew": max_rew,
-                }
+                save_data = {"state_dict_pv": pv_net.state_dict(), "max_rew": max_rew}
                 torch.save(save_data, checkpoint_model_filename)
 
             # if (args.env in ["CartPole-v0", "FrozenLake-v0"]) and (mean_rew > 0.95):
@@ -195,7 +178,7 @@ def main():
 
     # save last model
     print("Save last model")
-    save_data = {"state_dict_pol": pol_net.state_dict(), "state_dict_val": val_net.state_dict(), "max_rew": max_rew}
+    save_data = {"state_dict_pv": pv_net.state_dict(), "max_rew": max_rew}
     torch.save(save_data, last_model_filename)
 
     # test
@@ -203,8 +186,7 @@ def main():
     print("Test start")
     try:
         # 評価モード
-        pol_net.eval()
-        val_net.eval()
+        pv_net.eval()
         for epoch in range(args.test_epochs):
             obs = env.reset()
             done = False

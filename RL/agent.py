@@ -6,11 +6,9 @@ import math
 
 
 class PPOAgent:
-    def __init__(self, pol_net, val_net, optim_pol, optim_val, device, args):
-        self.pol_net = pol_net
-        self.val_net = val_net
-        self.optim_pol = optim_pol
-        self.optim_val = optim_val
+    def __init__(self, pv_net, optimizer, device, args):
+        self.pv_net = pv_net
+        self.optimizer = optimizer
         self.device = device
         self.minibatch_size = args.minibatch_size
         self.opt_epochs = args.opt_epochs
@@ -29,8 +27,7 @@ class PPOAgent:
     def get_action(self, obs):
         obs = torch.from_numpy(np.array(obs)).to(self.device)
         with torch.no_grad():
-            pi = self.pol_net(obs)
-            value = self.val_net(obs)
+            pi, value = self.pv_net(obs)
         c = Categorical(pi)
         action = c.sample()
         # Action, Value, llh(pi(a|s)の対数)
@@ -59,8 +56,8 @@ class PPOAgent:
         returns = torch.FloatTensor(returns).to(self.device)
         advantages = torch.FloatTensor(advantages).to(self.device)
 
+        pi, value = self.pv_net(obs)
         # Policy
-        pi = self.pol_net(obs)
         c = Categorical(pi)
         new_log_pi = c.log_prob(actions)
         ratio = torch.exp(new_log_pi - log_pis)  # pi(a|s) / pi_old(a|s)
@@ -68,23 +65,17 @@ class PPOAgent:
         pi_loss = (torch.max(-ratio * advantages, -clip_adv)).mean()
         # Entropy
         entropy = -ent_c * c.entropy().mean()
-        pol_loss = pi_loss + entropy
-
-        self.optim_pol.zero_grad()
-        pol_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.pol_net.parameters(), self.max_grad_norm)
-        self.optim_pol.step()
-
         # Value
-        value = self.val_net(obs)
         v_loss = self.v_loss_c * F.smooth_l1_loss(value.squeeze(1), returns).mean()
-        self.optim_val.zero_grad()
-        v_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.val_net.parameters(), self.max_grad_norm)
-        self.optim_val.step()
+
+        total_loss = pi_loss + v_loss + entropy
+
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.pv_net.parameters(), self.max_grad_norm)
+        self.optimizer.step()
 
         return pi_loss.item(), v_loss.item(), entropy.item()
 
     def calc_exp_val(self, step, max_val, min_val, tau):
         return (max_val - min_val) * math.exp(-step / tau) + min_val
-
