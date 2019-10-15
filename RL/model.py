@@ -19,7 +19,9 @@ class PVNet(nn.Module):
         print("in_features[{}], out_features[{}]".format(in_features, out_features))
 
         # 共通ネットワーク
-        self.layer = nn.Sequential(nn.Embedding(in_features, hid_num))
+        self.layer = nn.Sequential(
+            nn.Linear(in_features, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True)
+        )
 
         # Policy : 各行動の確率を出力
         self.policy = nn.Sequential(nn.Linear(hid_num, out_features), nn.Softmax(dim=-1))
@@ -34,5 +36,5 @@ class PVNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        h = self.layer(x.long())
+        h = self.layer(x)
         return self.policy(h), self.value(h)

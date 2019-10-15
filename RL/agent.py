@@ -6,7 +6,8 @@ import math
 
 
 class PPOAgent:
-    def __init__(self, pv_net, optimizer, device, args):
+    def __init__(self, pv_net, optimizer, observation_space, device, args):
+        self.in_features = observation_space.n
         self.pv_net = pv_net
         self.optimizer = optimizer
         self.device = device
@@ -25,7 +26,10 @@ class PPOAgent:
         self.train_count = 0
 
     def get_action(self, obs):
-        obs = torch.from_numpy(np.array(obs)).to(self.device)
+        obs = torch.from_numpy(np.array(obs)).long()  # テンソル化
+        obs = F.one_hot(obs, num_classes=self.in_features)  # Onehot化
+        obs = obs.to(device=self.device, dtype=torch.float)
+
         with torch.no_grad():
             pi, value = self.pv_net(obs)
         c = Categorical(pi)
@@ -50,7 +54,10 @@ class PPOAgent:
 
     def train_batch(self, batch, ent_c):
         obs, actions, _, _, log_pis, returns, advantages, = batch
-        obs = torch.FloatTensor(obs).to(self.device)
+        obs = torch.LongTensor(obs)
+        obs = F.one_hot(obs, num_classes=self.in_features)  # Onehot化
+        obs = obs.to(device=self.device, dtype=torch.float)
+
         actions = torch.FloatTensor(actions).to(self.device)
         log_pis = torch.FloatTensor(log_pis).to(self.device)
         returns = torch.FloatTensor(returns).to(self.device)
@@ -61,8 +68,8 @@ class PPOAgent:
         c = Categorical(pi)
         new_log_pi = c.log_prob(actions)
         ratio = torch.exp(new_log_pi - log_pis)  # pi(a|s) / pi_old(a|s)
-        clip_adv = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages
-        pi_loss = (torch.max(-ratio * advantages, -clip_adv)).mean()
+        clip_ratio = ratio.clamp(1.0 - self.clip_ratio, 1.0 + self.clip_ratio)
+        pi_loss = (torch.max(-ratio * advantages, -clip_ratio * advantages)).mean()
         # Entropy
         entropy = -ent_c * c.entropy().mean()
         # Value

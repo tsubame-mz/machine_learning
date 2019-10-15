@@ -5,7 +5,7 @@ from collections import deque
 import argparse
 import os
 
-from utils import _windows_enable_ANSI
+# from utils import _windows_enable_ANSI
 from env_wrapper import EnvMonitor
 from model import PVNet
 from memory import PPOBuffer, RolloutStorage
@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--minibatch_size_seq", type=int, default=4)
     parser.add_argument("--clip_ratio", type=float, default=0.2)  # 0.1～0.3
     parser.add_argument("--v_loss_c", type=float, default=0.9)  # 0.5～1.0
-    parser.add_argument("--start_ent_c", type=float, default=1.0)
+    parser.add_argument("--start_ent_c", type=float, default=10.0)  # 10.0～0.1
     parser.add_argument("--end_ent_c", type=float, default=0.01)  # 0～0.01
     parser.add_argument("--tau_ent_c", type=float, default=1000.0)
     parser.add_argument("--max_grad_norm", type=float, default=0.5)
@@ -75,7 +75,6 @@ def main():
         env_seed = args.seed
 
     env = gym.make(args.env)
-    # env = gym.make(args.env, is_slippery=False)   # FrozenLake
     env.seed(env_seed)
     env = EnvMonitor(env)
 
@@ -83,7 +82,7 @@ def main():
     print(pv_net)
     pv_net.to(device)
     optimizer = torch.optim.Adam(pv_net.parameters(), lr=args.lr)
-    agent = PPOAgent(pv_net, optimizer, device, args)
+    agent = PPOAgent(pv_net, optimizer, env.observation_space, device, args)
     local_buf = PPOBuffer(args)
     rollouts = RolloutStorage(args)
 
