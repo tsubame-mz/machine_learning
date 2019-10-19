@@ -43,8 +43,8 @@ def train(
                 done = False
                 buf = Buffer()
                 while not done:
-                    ob = torch.from_numpy(np.array(ob)).to(device=device)  # テンソル化
-                    action, value, llh, _ = agent.get_action(ob)
+                    ob_tsr = torch.from_numpy(np.array(ob)).to(device=device)  # テンソル化
+                    action, value, llh, _ = agent.get_action(ob_tsr)
                     next_ob, reward, done, info = env.step(action)
                     buf.append(ob, action, reward, value, llh)
 
@@ -105,8 +105,8 @@ def test(env, agent, n_test_epochs, render_env, device):
                 env.render()
 
             while not done:
-                ob = torch.from_numpy(np.array(ob)).to(device=device)
-                action, value, _, pi = agent.get_action(ob)
+                ob_tsr = torch.from_numpy(np.array(ob)).to(device=device)
+                action, value, _, pi = agent.get_action(ob_tsr)
                 next_ob, reward, done, info = env.step(action)
                 episode_reward += reward
                 ob = next_ob

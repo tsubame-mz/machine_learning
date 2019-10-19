@@ -105,4 +105,3 @@ class Agent:
         self.optim_v.step()
 
         return v_loss.item()
-
