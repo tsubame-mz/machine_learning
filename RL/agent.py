@@ -1,88 +1,108 @@
 import torch
-import numpy as np
-from torch.distributions import Categorical
 import torch.nn.functional as F
-import math
+from torch.distributions import Categorical
+import numpy as np
+
+# import math
 
 
-class PPOAgent:
-    def __init__(self, pv_net, optimizer, observation_space, device, args):
+class Agent:
+    def __init__(self, p_net, v_net, optim_p, optim_v, observation_space, device):
+        super(Agent, self).__init__()
+
         self.in_features = observation_space.n
-        self.pv_net = pv_net
-        self.optimizer = optimizer
+        self.p_net = p_net
+        self.v_net = v_net
+        self.optim_p = optim_p
+        self.optim_v = optim_v
         self.device = device
-        self.minibatch_size = args.minibatch_size
-        self.opt_epochs = args.opt_epochs
-        self.clip_ratio = args.clip_ratio
-        self.v_loss_c = args.v_loss_c
-        self.start_ent_c = args.start_ent_c
-        self.end_ent_c = args.end_ent_c
-        self.tau_ent_c = args.tau_ent_c
-        self.max_grad_norm = args.max_grad_norm
-        self.adv_eps = args.adv_eps
-        self.minibatch_size_seq = args.minibatch_size_seq
-        self.use_minibatch_seq = args.use_minibatch_seq
-
-        self.train_count = 0
+        # self.train_count = 0
 
     def get_action(self, obs):
-        obs = torch.from_numpy(np.array(obs)).long()  # テンソル化
-        obs = F.one_hot(obs, num_classes=self.in_features)  # Onehot化
-        obs = obs.to(device=self.device, dtype=torch.float)
-
+        obs = obs.long()
         with torch.no_grad():
-            pi, value = self.pv_net(obs)
+            pi = self.p_net(obs)
+            value = self.v_net(obs)
         c = Categorical(pi)
         action = c.sample()
-        # Action, Value, llh(pi(a|s)の対数)
+        # Action, Value, llh(対数尤度(log likelihood))
         return action.squeeze().item(), value.item(), c.log_prob(action).item(), pi.detach().cpu().numpy()
 
-    def train(self, rollouts):
-        ent_c = self.calc_exp_val(self.train_count, self.start_ent_c, self.end_ent_c, self.tau_ent_c)
+    def update(self, traj, batch_size, epochs, clip_param, v_loss_c, ent_c, max_grad_norm):
+        # self.calc_exp_val(self.train_count, self.start_ent_c, self.end_ent_c, self.tau_ent_c)
 
-        if self.use_minibatch_seq:
-            iterate = rollouts.iterate_seq(self.minibatch_size, self.opt_epochs)
-        else:
-            iterate = rollouts.iterate(self.minibatch_size, self.opt_epochs)
+        iterate = traj.iterate(batch_size, epochs)
         loss_vals = []
         for batch in iterate:
-            loss_vals.append(self.train_batch(batch, ent_c))
+            loss_vals.append(self._update_batch(batch, clip_param, v_loss_c, ent_c, max_grad_norm))
 
-        self.train_count += 1
+        # self.train_count += 1
         loss_vals = np.mean(loss_vals, axis=0)
         return loss_vals
 
-    def train_batch(self, batch, ent_c):
-        obs, actions, _, _, log_pis, returns, advantages, = batch
-        obs = torch.LongTensor(obs)
-        obs = F.one_hot(obs, num_classes=self.in_features)  # Onehot化
-        obs = obs.to(device=self.device, dtype=torch.float)
+    # def calc_exp_val(self, step, max_val, min_val, tau):
+    #     return (max_val - min_val) * math.exp(-step / tau) + min_val
 
-        actions = torch.FloatTensor(actions).to(self.device)
-        log_pis = torch.FloatTensor(log_pis).to(self.device)
-        returns = torch.FloatTensor(returns).to(self.device)
-        advantages = torch.FloatTensor(advantages).to(self.device)
+    def save_model(self, filename, info):
+        print("save_model: {}".format(filename))
+        save_data = {"state_dict_p": self.p_net.state_dict(), "state_dict_v": self.v_net.state_dict(), "info": info}
+        torch.save(save_data, filename)
 
-        pi, value = self.pv_net(obs)
+    def load_model(self, filename):
+        print("save_model: {}".format(filename))
+        load_data = torch.load(filename, map_location=self.device)
+        self.p_net.load_state_dict(load_data["state_dict_p"])
+        self.v_net.load_state_dict(load_data["state_dict_v"])
+        return load_data["info"]
+
+    def train(self):
+        self.p_net.train()
+        self.v_net.train()
+
+    def eval(self):
+        self.p_net.eval()
+        self.v_net.eval()
+
+    def _update_batch(self, batch: dict, clip_param: float, v_loss_c: float, ent_c: float, max_grad_norm: float):
+        obs = batch["obs"].long()
+        actions = batch["actions"]
+        llhs = batch["llhs"]
+        advantages = batch["advantages"]
+        returns = batch["returns"]
+
+        pol_loss, entropy = self._update_pol(obs, actions, llhs, advantages, clip_param, ent_c, max_grad_norm)
+        v_loss = self._update_val(obs, returns, v_loss_c, max_grad_norm)
+
+        return pol_loss, v_loss, entropy
+
+    def _update_pol(self, obs, actions, llhs, advantages, clip_param, ent_c, max_grad_norm):
         # Policy
+        pi = self.p_net(obs)
         c = Categorical(pi)
-        new_log_pi = c.log_prob(actions)
-        ratio = torch.exp(new_log_pi - log_pis)  # pi(a|s) / pi_old(a|s)
-        clip_ratio = ratio.clamp(1.0 - self.clip_ratio, 1.0 + self.clip_ratio)
-        pi_loss = (torch.max(-ratio * advantages, -clip_ratio * advantages)).mean()
+        new_llhs = c.log_prob(actions)
+        ratio = torch.exp(new_llhs - llhs)  # pi(a|s) / pi_old(a|s)
+        clip_ratio = ratio.clamp(1.0 - clip_param, 1.0 + clip_param)
+        pol_loss = (torch.max(-ratio * advantages, -clip_ratio * advantages)).mean()
         # Entropy
         entropy = -ent_c * c.entropy().mean()
-        # Value
-        v_loss = self.v_loss_c * F.smooth_l1_loss(value.squeeze(1), returns).mean()
 
-        total_loss = pi_loss + v_loss + entropy
-
-        self.optimizer.zero_grad()
+        total_loss = pol_loss + entropy
+        self.optim_p.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.pv_net.parameters(), self.max_grad_norm)
-        self.optimizer.step()
+        torch.nn.utils.clip_grad_norm_(self.p_net.parameters(), max_grad_norm)
+        self.optim_p.step()
 
-        return pi_loss.item(), v_loss.item(), entropy.item()
+        return pol_loss.item(), entropy.item()
 
-    def calc_exp_val(self, step, max_val, min_val, tau):
-        return (max_val - min_val) * math.exp(-step / tau) + min_val
+    def _update_val(self, obs, returns, v_loss_c, max_grad_norm):
+        # Value
+        value = self.v_net(obs)
+        v_loss = v_loss_c * F.smooth_l1_loss(value.squeeze(1), returns).mean()
+
+        self.optim_v.zero_grad()
+        v_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.v_net.parameters(), max_grad_norm)
+        self.optim_v.step()
+
+        return v_loss.item()
+
