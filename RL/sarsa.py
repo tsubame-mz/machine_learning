@@ -7,85 +7,79 @@ import pickle
 import os
 import math
 import time
-from datetime import datetime
+
+# from datetime import datetime
 
 
 def calc_temperature(step, max_t, min_t, tau):
     return (max_t - min_t) * math.exp(-step / tau) + min_t
 
 
-def sarsa(q_value, state, action, reward, next_state, next_action, eta, gamma):
-    q_value[state, action] = (1 - eta) * q_value[state, action] + eta * (
-        reward + gamma * q_value[next_state, next_action]
-    )
+def sarsa(q_value, ob, action, reward, next_ob, next_action, eta, gamma):
+    q_value[ob, action] = (1 - eta) * q_value[ob, action] + eta * (reward + gamma * q_value[next_ob, next_action])
     return q_value
 
 
-def get_action(q_value, state, step, max_t, min_t, tau):
+def get_action(q_value, ob, step, max_t, min_t, tau):
     t = calc_temperature(step, max_t, min_t, tau)
-    pi = F.softmax(torch.from_numpy(q_value[state, :]) / t, dim=0)
+    pi = F.softmax(torch.from_numpy(q_value[ob, :]) / t, dim=0)
     action = Categorical(pi).sample().item()
     return action
 
 
-def get_max_action(q_value, state):
-    return np.argmax(q_value[state])
+def get_max_action(q_value, ob):
+    return np.argmax(q_value[ob])
 
 
 def one_epi(env, q_value, eta, gamma, start_step, max_t, min_t, tau):
     done = False
     episode_reward = 0
-    state_history = []
-    action_history = []
+    rewards = []
     step = start_step
 
-    state = env.reset()
-    action = get_action(q_value, state, step, max_t, min_t, tau)
+    ob = env.reset()
+    action = get_action(q_value, ob, step, max_t, min_t, tau)
     while not done:
-        next_state, reward, done, info = env.step(action)
-        next_action = get_action(q_value, next_state, step, max_t, min_t, tau)
-        # print(state, action, reward, next_state, next_action)
-        q_value = sarsa(q_value, state, action, reward, next_state, next_action, eta, gamma)
+        next_ob, reward, done, info = env.step(action)
+        next_action = get_action(q_value, next_ob, step, max_t, min_t, tau)
+        # print(state, action, reward, next_ob, next_action)
+        q_value = sarsa(q_value, ob, action, reward, next_ob, next_action, eta, gamma)
 
-        state_history.append(state)
-        action_history.append(action)
+        rewards.append(reward)
         episode_reward += reward
-        state = next_state
+        ob = next_ob
         action = next_action
         step += 1
-    return q_value, episode_reward, len(state_history)
+    return q_value, episode_reward, len(rewards)
 
 
 def one_epi_test(env, q_value):
     done = False
     episode_reward = 0
-    state_history = []
-    action_history = []
-    reward_history = []
-    done_history = []
-    q_value_history = []
+    obs = []
+    actions = []
+    rewards = []
+    dones = []
 
-    state = env.reset()
+    ob = env.reset()
     while not done:
-        action = get_max_action(q_value, state)
-        next_state, reward, done, info = env.step(action)
+        action = get_max_action(q_value, ob)
+        next_ob, reward, done, info = env.step(action)
 
-        state_history.append(state)
-        action_history.append(action)
-        reward_history.append(reward)
-        done_history.append(done)
-        q_value_history.append(q_value[state, action])
+        obs.append(ob)
+        actions.append(action)
+        rewards.append(reward)
+        dones.append(done)
         episode_reward += reward
-        state = next_state
+        ob = next_ob
     return (
         episode_reward,
-        len(state_history),
+        len(obs),
         dict(
-            states=np.array(state_history, dtype="float32"),
-            actions=np.array(action_history, dtype="float32"),
-            rewards=np.array(reward_history, dtype="float32"),
-            dones=np.array(done_history, dtype="float32"),
-            q_values=np.array(q_value_history, dtype="float32"),
+            obs=np.array(obs, dtype=float),
+            actions=np.array(actions, dtype=float),
+            rewards=np.array(rewards, dtype=float),
+            dones=np.array(dones, dtype=float),
         ),
     )
 
@@ -141,10 +135,10 @@ def test(env, n_test_episode, q_value):
 
 
 def main():
-    is_train = False
-    is_test = False
+    is_train = True
+    is_test = True
 
-    env = gym.make("Taxi-v2")
+    env = gym.make("Taxi-v3")
     ob_num = env.observation_space.n
     ac_num = env.action_space.n
 
@@ -180,8 +174,9 @@ def main():
             print()
 
     if is_test:
-        now_str = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
-        expert_filename = "./data/expert_data/taxi_expert_" + now_str + ".pkl"
+        # now_str = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
+        # expert_filename = "./data/expert_data/taxi_expert_" + now_str + ".pkl"
+        expert_filename = "./data/expert_data/taxi_expert.pkl"
 
         expert_epis = test(env, n_test_episode, q_value)
 

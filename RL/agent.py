@@ -2,21 +2,17 @@ import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical
 import numpy as np
-
-# import math
+import os
 
 
 class Agent:
-    def __init__(self, p_net, v_net, optim_p, optim_v, observation_space, device):
+    def __init__(self, p_net, v_net, optim_p, optim_v, device):
         super(Agent, self).__init__()
-
-        self.in_features = observation_space.n
         self.p_net = p_net
         self.v_net = v_net
         self.optim_p = optim_p
         self.optim_v = optim_v
         self.device = device
-        # self.train_count = 0
 
     def get_action(self, obs):
         obs = obs.long()
@@ -28,28 +24,36 @@ class Agent:
         # Action, Value, llh(対数尤度(log likelihood))
         return action.squeeze().item(), value.item(), c.log_prob(action).item(), pi.detach().cpu().numpy()
 
-    def update(self, traj, batch_size, epochs, clip_param, v_loss_c, ent_c, max_grad_norm):
-        # self.calc_exp_val(self.train_count, self.start_ent_c, self.end_ent_c, self.tau_ent_c)
+    def get_llhs(self, obs, actions):
+        with torch.no_grad():
+            pi = self.p_net(obs)
+            llhs = Categorical(pi).log_prob(actions)
+        return llhs.detach()
 
+    def update(self, traj, batch_size, epochs, clip_param, v_loss_c, ent_c, max_grad_norm):
         iterate = traj.iterate(batch_size, epochs)
         loss_vals = []
         for batch in iterate:
             loss_vals.append(self._update_batch(batch, clip_param, v_loss_c, ent_c, max_grad_norm))
 
-        # self.train_count += 1
         loss_vals = np.mean(loss_vals, axis=0)
         return loss_vals
 
-    # def calc_exp_val(self, step, max_val, min_val, tau):
-    #     return (max_val - min_val) * math.exp(-step / tau) + min_val
-
-    def save_model(self, filename, info):
-        print("save_model: {}".format(filename))
+    def save_model(self, filename, info, suffix):
+        if suffix:
+            filename += "_" + suffix
+        filename += ".pkl"
+        print("save model: {}".format(filename))
         save_data = {"state_dict_p": self.p_net.state_dict(), "state_dict_v": self.v_net.state_dict(), "info": info}
         torch.save(save_data, filename)
 
-    def load_model(self, filename):
-        print("save_model: {}".format(filename))
+    def load_model(self, filename, suffix):
+        if suffix:
+            filename += "_" + suffix
+        filename += ".pkl"
+        if not os.path.exists(filename):
+            return None
+        print("load model: {}".format(filename))
         load_data = torch.load(filename, map_location=self.device)
         self.p_net.load_state_dict(load_data["state_dict_p"])
         self.v_net.load_state_dict(load_data["state_dict_v"])
@@ -105,3 +109,88 @@ class Agent:
         self.optim_v.step()
 
         return v_loss.item()
+
+
+class Discriminator:
+    def __init__(self, pseudo_rew_net, shaping_val_net, optim_discrim, device):
+        self.pseudo_rew_net = pseudo_rew_net
+        self.shaping_val_net = shaping_val_net
+        self.optim_discrim = optim_discrim
+        self.device = device
+
+    def get_pseudo_reward(self, obs):
+        obs = obs.long()
+        with torch.no_grad():
+            reward = self.pseudo_rew_net(obs)
+        return reward.item()
+
+    def update(self, agent_traj, expert_traj, batch_size, gamma, agent):
+        agent_iterate = agent_traj.iterate(batch_size, epoch=1)
+        expert_iterate = expert_traj.iterate(batch_size, epoch=1)
+        loss_vals = []
+        for agent_batch, expert_batch in zip(agent_iterate, expert_iterate):
+            loss_vals.append(self._update_batch(agent_batch, expert_batch, gamma, agent))
+
+        loss_vals = np.mean(loss_vals, axis=0)
+        return loss_vals
+
+    def save_model(self, filename, suffix):
+        if suffix:
+            filename += "_" + suffix
+        filename += ".pkl"
+        print("save model: {}".format(filename))
+        save_data = {
+            "state_dict_rew": self.pseudo_rew_net.state_dict(),
+            "state_dict_val": self.shaping_val_net.state_dict(),
+        }
+        torch.save(save_data, filename)
+
+    def load_model(self, filename, suffix):
+        if suffix:
+            filename += "_" + suffix
+        filename += ".pkl"
+        if not os.path.exists(filename):
+            return None
+        print("load model: {}".format(filename))
+        load_data = torch.load(filename, map_location=self.device)
+        self.pseudo_rew_net.load_state_dict(load_data["state_dict_rew"])
+        self.shaping_val_net.load_state_dict(load_data["state_dict_val"])
+
+    def train(self):
+        self.pseudo_rew_net.train()
+        self.shaping_val_net.train()
+
+    def eval(self):
+        self.pseudo_rew_net.eval()
+        self.shaping_val_net.eval()
+
+    def _update_batch(self, agent_batch, expert_batch, gamma, agent):
+        agent_loss = self._calc_airl_loss(agent_batch, gamma, agent, True)
+        expert_loss = self._calc_airl_loss(expert_batch, gamma, agent, False)
+        discrim_loss = agent_loss + expert_loss
+
+        self.optim_discrim.zero_grad()
+        discrim_loss.backward()
+        self.optim_discrim.step()
+
+        return agent_loss.item(), expert_loss.item()
+
+    def _calc_airl_loss(self, batch, gamma, agent, is_agent):
+        obs = batch["obs"].long()
+        actions = batch["actions"]
+        next_obs = batch["next_obs"].long()
+        dones = batch["dones"]
+
+        value = self.shaping_val_net(obs).squeeze(1)
+        next_value = self.shaping_val_net(next_obs).squeeze(1)
+        reward = self.pseudo_rew_net(obs).squeeze(1)
+        energies = reward + (1 - dones) * gamma * next_value - value
+        llhs = agent.get_llhs(obs, actions)
+        logits = energies - llhs
+
+        if is_agent:
+            target = torch.zeros(len(logits)).to(self.device)
+        else:
+            target = torch.ones(len(logits)).to(self.device)
+        discrim_loss = 0.5 * F.binary_cross_entropy_with_logits(logits, target)
+        return discrim_loss
