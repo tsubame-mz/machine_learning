@@ -72,16 +72,7 @@ def one_epi_test(env, q_value):
         dones.append(done)
         episode_reward += reward
         ob = next_ob
-    return (
-        episode_reward,
-        len(obs),
-        dict(
-            obs=np.array(obs, dtype=float),
-            actions=np.array(actions, dtype=float),
-            rewards=np.array(rewards, dtype=float),
-            dones=np.array(dones, dtype=float),
-        ),
-    )
+    return (episode_reward, len(obs), dict(obs=obs, actions=actions, rewards=rewards, dones=dones))
 
 
 def train(env, n_episode, q_value, eta, gamma, max_t, min_t, tau, log_interval):
@@ -142,7 +133,7 @@ def main():
     ob_num = env.observation_space.n
     ac_num = env.action_space.n
 
-    eta = 0.1  # 学習率
+    eta = 0.01  # 学習率
     gamma = 0.9  # 報酬割引率
     n_episode = 30000
     n_test_episode = 1000
