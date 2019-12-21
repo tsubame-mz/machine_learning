@@ -1,5 +1,14 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class Swish(nn.Module):
+    def __init__(self):
+        super(Swish, self).__init__()
+
+    def forward(self, x):
+        return x * torch.sigmoid(x)
 
 
 class PNet(nn.Module):
@@ -12,9 +21,9 @@ class PNet(nn.Module):
         # Policy : 各行動の確率を出力
         self.layer = nn.Sequential(
             nn.Linear(self.in_features, hid_num),
-            nn.ReLU(inplace=True),
+            Swish(),
             nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
+            Swish(),
             nn.Linear(hid_num, out_features),
             nn.Softmax(dim=-1),
         )
@@ -38,11 +47,7 @@ class VNet(nn.Module):
 
         # Value : 状態の価値を出力
         self.layer = nn.Sequential(
-            nn.Linear(self.in_features, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Linear(hid_num, 1),
+            nn.Linear(self.in_features, hid_num), Swish(), nn.Linear(hid_num, hid_num), Swish(), nn.Linear(hid_num, 1)
         )
 
         # ネットワークの重みを初期化
