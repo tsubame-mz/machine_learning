@@ -27,7 +27,7 @@ flags.DEFINE_float("clip_param", 0.2, "PPO clipping liklihood ratio")
 flags.DEFINE_float("ent_c", 0.2, "entropy coefficient")
 flags.DEFINE_float("v_loss_c", 0.9, "value loss coefficient")
 flags.DEFINE_float("max_grad_norm", 0.5, "maximum gradient norm")
-flags.DEFINE_bool("use_discrim", True, "using AIRL Discriminator")
+flags.DEFINE_bool("use_discrim", False, "using AIRL Discriminator")
 
 flags.DEFINE_integer("n_sample_episodes", 10, "sampling episode in each training epoch")
 flags.DEFINE_integer("n_train_epochs", 10000, "training epoch")
@@ -206,7 +206,7 @@ def main(_):
     device = get_device(FLAGS.use_gpu)
     print("Use device: {}".format(device))
 
-    # # モデル保存用フォルダ生成
+    # モデル保存用フォルダ生成
     data_dir = FLAGS.data_dir
     create_directory(data_dir)
     create_directory(os.path.join(data_dir, "models"))
