@@ -16,7 +16,6 @@ class MCTS:
         pb_c_init: float,
         discount: float,
         num_simulations: int,
-        is_train: bool,
     ):
         self.dirichlet_alpha = dirichlet_alpha
         self.exploration_fraction = exploration_fraction
@@ -24,16 +23,13 @@ class MCTS:
         self.pb_c_init = pb_c_init
         self.discount = discount
         self.num_simulations = num_simulations
-        self.is_train = is_train
 
     def run_mcts(self, obs: np.ndarray, network: Network) -> Node:
         # ルートノードを展開
         root = Node(0)
         state, policy, value = network.initial_inference(obs)
         root.expand_node(0, state.squeeze().detach().numpy(), 0, policy.squeeze().detach().numpy())
-
-        if self.is_train:
-            root.add_exploration_noise(self.dirichlet_alpha, self.exploration_fraction)  # if train:
+        root.add_exploration_noise(self.dirichlet_alpha, self.exploration_fraction)  # if train:
 
         min_max_stats = MinMaxStats(None)
         for _ in range(self.num_simulations):

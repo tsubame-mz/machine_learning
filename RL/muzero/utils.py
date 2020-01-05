@@ -1,6 +1,7 @@
 import collections
 from typing import Optional
 import numpy as np
+import torch
 
 MAXIMUM_FLOAT_VALUE = float("inf")
 KnownBounds = collections.namedtuple("KnownBounds", ["min", "max"])
@@ -38,3 +39,16 @@ def softmax(x: np.ndarray) -> np.ndarray:
     x_max = np.max(x)
     exp = np.exp(x - x_max)
     return exp / np.sum(exp)
+
+
+def get_device(use_gpu):
+    # サポート対象のGPUがあれば使う
+    if use_gpu:
+        print("Check GPU available")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cpu")
+    if device == "cuda":
+        torch.backends.cudnn.benchmark = True
+    print(f"Use device[{device}]")
+    return device

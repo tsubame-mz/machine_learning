@@ -14,14 +14,13 @@ def main():
     env_name = "Taxi-v3"
     state_units = 16
     hid_units = 8
-    dirichlet_alpha = 0.25
+    dirichlet_alpha = 0.1
     exploration_fraction = 0.25
     pb_c_base = 19652
     pb_c_init = 1.25
     discount = 0.99
     num_simulations = 50
     filename = "model_last.pth"
-    is_train = False
 
     device = get_device(True)
 
@@ -30,7 +29,7 @@ def main():
     env = TaxiObservationWrapper(env)
 
     network = Network(env.observation_space.nvec.sum(), env.action_space.n, state_units, hid_units)
-    mcts = MCTS(dirichlet_alpha, exploration_fraction, pb_c_base, pb_c_init, discount, num_simulations, is_train)
+    mcts = MCTS(dirichlet_alpha, exploration_fraction, pb_c_base, pb_c_init, discount, num_simulations)
     agent = Agent(network, mcts)
     trainer = Trainer()
 
