@@ -21,7 +21,7 @@ class GameBuffer:
         for i, (obs, action, reward, value, policy) in enumerate(
             zip(self.observations, self.actions, self.rewards, self.values, self.policy)
         ):
-            print(f"[{i+1:3d}]: obs[{obs}]/action[{action}]/reward[{reward:.3f}]/value[{value:.3f}], policy[{policy}]")
+            print(f"[{i+1:3d}]: obs[{obs}]/action[{action}]/reward[{reward:.3f}]/value[{value:.6f}], policy[{policy}]")
 
     def sample_target(self, num_unroll_steps: int, td_steps: int, discount: float):
         pos = np.random.randint(0, len(self.rewards) - num_unroll_steps)

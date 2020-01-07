@@ -14,12 +14,12 @@ def main():
     env_name = "Taxi-v3"
     state_units = 16
     hid_units = 8
-    dirichlet_alpha = 0.1
+    dirichlet_alpha = 0.25
     exploration_fraction = 0.25
     pb_c_base = 19652
     pb_c_init = 1.25
     discount = 0.99
-    num_simulations = 50
+    num_simulations = 100
     filename = "model_last.pth"
 
     device = get_device(True)
@@ -35,6 +35,7 @@ def main():
 
     if os.path.exists(filename):
         agent.load_model(filename, device)
+        # print(network.state_dict())
 
     trainer.validate(env, agent, network)
 
