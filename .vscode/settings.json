@@ -2,7 +2,7 @@
     "python.venvPath": ".venv",
     "python.pythonPath": "${workspaceFolder}/.venv/Scripts/python",
     "python.autoComplete.addBrackets": true,
-    "python.jediEnabled": true,
+    "python.jediEnabled": false,
     // flake8
     "python.linting.pylintEnabled": false,
     "python.linting.lintOnSave": true,
