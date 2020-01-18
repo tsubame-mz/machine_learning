@@ -1,6 +1,6 @@
 import numpy as np
 
-from agent.Agent import Agent
+from agent import Agent
 
 
 class RandomAgent(Agent):
