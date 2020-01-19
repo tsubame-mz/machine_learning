@@ -34,9 +34,6 @@ class TicTacToeEnv:
         if len(self.legal_actions) == 0:
             self._done = True
 
-        if self._done:
-            self._player = self.EMPTY
-
     def render(self):
         token_list = self.TOKENS[self._board]
         print("+" + "-" * 3 + "+")
@@ -71,6 +68,8 @@ class TicTacToeEnv:
 
     @property
     def legal_actions(self):
+        if self._done:
+            return []
         return np.where(self._board == 0)[0].astype(np.int)
 
     def _judge(self):
