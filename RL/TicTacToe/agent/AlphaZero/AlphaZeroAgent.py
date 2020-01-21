@@ -4,8 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical
-
+import os
 
 from agent import Agent
 
@@ -86,8 +85,42 @@ class AlphaZeroAgent(Agent):
 
     def get_action(self, env):
         self.network.eval()
-        self._run_mcts(env)
-        return np.random.choice(env.legal_actions)
+        return self._run_mcts(env)
+
+    def train(self, batch, optimizer):
+        self.network.train()
+        p_loss = 0.0
+        v_loss = 0.0
+        # TODO: minibatch
+        for board, player, (target_value, target_policy) in batch:
+            obs = self._make_obs(board, player)
+            policy, value = self.network.inference(obs)
+
+            p_loss += -(torch.from_numpy(target_policy).float() * policy.log()).mean()
+            v_loss += F.mse_loss(value, torch.Tensor([target_value]).float())
+        p_loss /= len(batch)
+        v_loss /= len(batch)
+
+        optimizer.zero_grad()
+        total_loss = p_loss + v_loss
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.network.parameters(), 0.5)
+        optimizer.step()
+
+        return p_loss.item(), v_loss.item()
+
+    def save_model(self, filename):
+        print(f"Save model: {filename}")
+        save_data = {"state_dict": self.network.state_dict()}
+        torch.save(save_data, filename)
+
+    def load_model(self, filename):
+        print(f"Load model: {filename}")
+        if os.path.exists(filename):
+            load_data = torch.load(filename)
+            self.network.load_state_dict(load_data["state_dict"])
+        else:
+            print(f"{filename} not found")
 
     def _run_mcts(self, env):
         root = AlphaZeroNode(0)
@@ -109,11 +142,12 @@ class AlphaZeroAgent(Agent):
             # node.print_node()
             value = self._evaluate(node, scratch_env)
             self._backpropagate(scratch_path, value, scratch_env.player)
-        root.print_node()
+        # root.print_node()
         return self._select_action(env, root), root
 
     def _evaluate(self, node: AlphaZeroNode, env):
-        obs, mask = self._make_obs(env)
+        obs = self._make_obs(env.board, env.player)
+        mask = self._make_mask(env.legal_actions)
         policy, value = self.network.inference(obs, mask)
         # print(policy, value)
 
@@ -125,11 +159,14 @@ class AlphaZeroAgent(Agent):
 
         return value.item()
 
-    def _make_obs(self, env):
-        obs = torch.from_numpy(np.concatenate([env.board, [env.player]])).float()
+    def _make_obs(self, board, player):
+        obs = torch.from_numpy(np.concatenate([board, [player]])).float()
+        return obs
+
+    def _make_mask(self, legal_actions):
         mask = torch.ones(9)  # TODO
-        mask[env.legal_actions] = 0.0
-        return obs, mask
+        mask[legal_actions] = 0.0
+        return mask
 
     def _add_exploration_noise(self, node: AlphaZeroNode):
         root_dirichlet_alpha = 0.15  # TODO

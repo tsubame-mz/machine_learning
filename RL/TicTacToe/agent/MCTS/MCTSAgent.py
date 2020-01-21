@@ -6,6 +6,7 @@ import numpy as np
 from agent import Agent, RandomAgent
 
 
+# NegaMax type
 class MCTSNode:
     def __init__(self, parent: MCTSNode = None):
         self.parent = parent
@@ -17,7 +18,7 @@ class MCTSNode:
         for action in actions:
             self.children[action] = MCTSNode(self)
 
-    def select_child(self, ucb_sign):
+    def select_child(self):
         # print("select_child")
         for action, child in self.children.items():
             # 未探索の子を優先
@@ -25,21 +26,21 @@ class MCTSNode:
                 return action, child
         # UCB
         # self.print_node()
-        ucb = {action: self._ucb_score(child, ucb_sign) for action, child in self.children.items()}
+        ucb = {action: self._ucb_score(child) for action, child in self.children.items()}
         max_ucb = max(ucb.items(), key=lambda x: x[1])
         # print(ucb, max_ucb)
         action = max_ucb[0]
         return action, self.children[action]
 
-    def backup(self, reward):
+    def backup(self, value):
         self.visit_count += 1
-        self.value_sum += reward
+        self.value_sum += value
         if self.parent:
-            self.parent.backup(reward)
+            self.parent.backup(-value)
 
-    def _ucb_score(self, child: MCTSNode, ucb_sign):
+    def _ucb_score(self, child: MCTSNode):
         c = 1.0  # TODO
-        exploitation_value = (ucb_sign * child.value_sum) / child.visit_count
+        exploitation_value = child.value_sum / child.visit_count
         exploration_value = np.sqrt(2.0 * np.log(self.visit_count) / child.visit_count)
         ucb_score = exploitation_value + c * exploration_value
         return ucb_score
@@ -75,9 +76,9 @@ class MCTSAgent(Agent):
         for i in range(self.simulation_num):
             # print(f"Simulation[{i+1}]")
             temp_env = copy.deepcopy(env)
-            node = self._find_leaf(root, temp_env, env.player)
-            reward = self._playout(temp_env, env.player)
-            node.backup(reward)
+            node = self._find_leaf(root, temp_env)
+            value = self._playout(temp_env)
+            node.backup(value)
         # root.print_node()
         visits = {action: child.visit_count for action, child in root.children.items()}
         # print(visits)
@@ -85,10 +86,9 @@ class MCTSAgent(Agent):
         action = max_visit[0]
         return action
 
-    def _find_leaf(self, node: MCTSNode, env, root_player):
+    def _find_leaf(self, node: MCTSNode, env):
         while node.expanded:
-            ucb_sign = -1.0 if env.player != root_player else 1.0
-            action, node = node.select_child(ucb_sign)
+            action, node = node.select_child()
             env.step(action)
 
         # expand
@@ -99,10 +99,16 @@ class MCTSAgent(Agent):
             env.step(action)
         return node
 
-    def _playout(self, env, player):
+    def _playout(self, env):
+        player = env.player
         while not env.done:
             action = self.random_agent.get_action(env)
             env.step(action)
-        reward = env.winner * player
+        value = 0
+        if env.winner != 0:
+            if env.winner != player:
+                value = +1
+            else:
+                value = -1
         # env.render()
-        return reward
+        return value
