@@ -1,7 +1,7 @@
 import copy
 from typing import List
 import numpy as np
-import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from TicTacToe import TicTacToeEnv
 from agent import AlphaZeroAgent
@@ -10,15 +10,15 @@ from ralamb import Ralamb
 
 class GameBuffer:
     def __init__(self):
-        self.boards = []
+        self.observations = []
         self.players = []
         self.actions = []
         self.child_visits = []
         self.winner = TicTacToeEnv.EMPTY
         self.num_actions = 9
 
-    def append(self, board, player, action):
-        self.boards.append(board)
+    def append(self, obs, player, action):
+        self.observations.append(obs)
         self.players.append(player)
         self.actions.append(action)
 
@@ -61,8 +61,8 @@ class ReplayBuffer:
 
     def sample_batch(self):
         games = np.random.choice(self.buffer, self.batch_size)
-        game_pos = [(g, np.random.randint(len(g.boards))) for g in games]
-        return [(g.boards[i], g.players[i], g.make_target(i)) for (g, i) in game_pos]
+        game_pos = [(g, np.random.randint(len(g.observations))) for g in games]
+        return [(g.observations[i], g.make_target(i)) for (g, i) in game_pos]
 
 
 def play_game(env, agent):
@@ -70,12 +70,12 @@ def play_game(env, agent):
     game = GameBuffer()
     while not env.done:
         # env.render()
-        action, root = agent.get_action(env)
+        action, root = agent.get_action(env, True)
         # root.print_node()
-        board = copy.deepcopy(env.board)
+        obs = copy.deepcopy(env.observation)
         player = env.player
         env.step(action)
-        game.append(board, player, action)
+        game.append(obs, player, action)
         game.store_search_statistics(root)
     # env.render()
     game.set_winner(env.winner)
@@ -94,33 +94,60 @@ def validate(env, agent, is_render=False):
     while not env.done:
         if is_render:
             env.render()
-        action, root = agent.get_action(env)
+        action, root = agent.get_action(env, True)
         if is_render:
-            root.print_node()
+            root.print_node(print_depth=1)
         env.step(action)
     env.render()
 
 
-def alphazero(env, agent, replay, optimizer):
+def calc_win_rate(replay):
+    win_b_cnt = 0
+    win_w_cnt = 0
+    draw_cnt = 0
+    for game in replay.buffer:
+        if game.winner == TicTacToeEnv.BLACK:
+            win_b_cnt += 1
+        elif game.winner == TicTacToeEnv.WHITE:
+            win_w_cnt += 1
+        else:
+            draw_cnt += 1
+    win_b_rate = win_b_cnt / len(replay.buffer)
+    win_w_rate = win_w_cnt / len(replay.buffer)
+    draw_rate = draw_cnt / len(replay.buffer)
+
+    return win_b_rate, win_w_rate, draw_rate
+
+
+def alphazero(env, agent, replay, optimizer, writer):
     for i in range(1000):
         run_selfplay(env, agent, replay)
         p_loss, v_loss = agent.train(replay.sample_batch(), optimizer)
-        print(f"{i}: Loss:P[{p_loss}]/V[{v_loss}]")
+        win_b_rate, win_w_rate, draw_rate = calc_win_rate(replay)
+        print(
+            f"{i}: Loss:P[{p_loss:.6f}]/V[{v_loss:.6f}], Win:B[{win_b_rate:.6f}]/W[{win_w_rate:.6f}], Draw[{draw_rate:.6f}]"
+        )
+        writer.add_scalar("AlphaZero/p_loss", p_loss, i + 1)
+        writer.add_scalar("AlphaZero/v_loss", v_loss, i + 1)
+        writer.add_scalar("AlphaZero/win_b_rate", win_b_rate, i + 1)
+        writer.add_scalar("AlphaZero/win_w_rate", win_w_rate, i + 1)
+        writer.add_scalar("AlphaZero/draw_rate", draw_rate, i + 1)
 
         if (i % 10) == 0:
             validate(env, agent)
-            agent.load_model("alphazero_model.pth")
+            agent.save_model("alphazero_model.pth")
 
 
 def main():
     env = TicTacToeEnv()
     agent = AlphaZeroAgent()
     replay = ReplayBuffer(100, 32)
-    optimizer = Ralamb(agent.network.parameters(), lr=1e-3, weight_decay=1e-6)
+    optimizer = Ralamb(agent.network.parameters(), lr=1e-2, weight_decay=1e-4)
 
     agent.load_model("alphazero_model.pth")
     try:
-        alphazero(env, agent, replay, optimizer)
+        writer = SummaryWriter("./logs/AlphaZero")
+        alphazero(env, agent, replay, optimizer, writer)
     except KeyboardInterrupt:
         print("Keyboard interrupt")
     print("Train complete")

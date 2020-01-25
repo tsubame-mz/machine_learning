@@ -72,6 +72,10 @@ class TicTacToeEnv:
             return []
         return np.where(self._board == 0)[0].astype(np.int)
 
+    @property
+    def observation(self):
+        return np.concatenate([self._board, [self._player]])
+
     def _judge(self):
         winner = self.EMPTY
         done = False

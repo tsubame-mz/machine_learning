@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Dict
 import copy
 import numpy as np
@@ -15,13 +16,69 @@ def weight_init(m):
         nn.init.constant_(m.bias, 0)
 
 
+class AlphaZeroNetwork(nn.Module):
+    def __init__(self):
+        super(AlphaZeroNetwork, self).__init__()
+        input_num = 10  # TODO
+        hid_num = 32  # TODO
+        out_Num = 9  # TODO
+
+        self.common_layers = nn.Sequential(
+            nn.Linear(input_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
+        )
+        self.policy_layers = nn.Sequential(nn.Linear(hid_num, out_Num),)
+        self.value_layers = nn.Sequential(nn.Linear(hid_num, 1), nn.Tanh(),)  # ターンプレイヤーが勝ち=1, 負け=-1
+
+        self.common_layers.apply(weight_init)
+        self.policy_layers.apply(weight_init)
+        self.value_layers.apply(weight_init)
+
+    def inference(self, x: torch.Tensor, mask: torch.Tensor = None):
+        # print(x, mask)
+        h = self.common_layers(x)
+        policy = self.policy_layers(h)
+        value = self.value_layers(h)
+        if mask is not None:
+            policy += mask.masked_fill(mask == 1, -np.inf)
+        return F.softmax(policy, dim=0), value
+
+
 class AlphaZeroNode:
-    def __init__(self, prior):
+    def __init__(self, prior, player):
         self.prior = prior
         self.visit_count = 0
         self.value_sum = 0
-        self.to_play = None
+        self.to_play = player
         self.children: Dict[int, AlphaZeroNode] = {}
+
+    def expand(self, legal_actions, policy, child_player):
+        for action in legal_actions:
+            self.children[action] = AlphaZeroNode(policy[action].item(), child_player)
+
+    def add_exploration_noise(self):
+        root_dirichlet_alpha = 0.15  # TODO
+        root_exploration_fraction = 0.25  # TODO
+        # node.print_node()
+        actions = self.children.keys()
+        noise = np.random.gamma(root_dirichlet_alpha, 1, len(actions))
+        frac = root_exploration_fraction
+        for a, n in zip(actions, noise):
+            self.children[a].prior = (self.children[a].prior * (1 - frac)) + (n * frac)
+        # node.print_node()
+
+    def select_child(self):
+        ucb = {action: self._ucb_score(child) for action, child in self.children.items()}
+        max_ucb = max(ucb.items(), key=lambda x: x[1])
+        action = max_ucb[0]
+        # print("UCB:", ucb, max_ucb)
+        return action, self.children[action]
+
+    def select_action(self):
+        visits = {action: child.visit_count for action, child in self.children.items()}
+        # print("visits:", visits)
+        max_visit = max(visits.items(), key=lambda x: x[1])
+        action = max_visit[0]
+        return action
 
     @property
     def expanded(self):
@@ -33,7 +90,7 @@ class AlphaZeroNode:
             return 0
         return self.value_sum / self.visit_count
 
-    def print_node(self, depth=0, action=None):
+    def print_node(self, depth=0, action=None, print_depth=None):
         print("- Node -" + "-" * 72) if depth == 0 else None
         print("--" * depth, end="")
         print(" ", end="") if depth != 0 else None
@@ -41,70 +98,47 @@ class AlphaZeroNode:
         print(
             f"id[{id(self)}]/prior[{self.prior}]/visit_count[{self.visit_count}]/value_sum[{self.value_sum}]/to_play[{self.to_play}]"
         )
-        for action, child in self.children.items():
-            child.print_node(depth + 1, action)
+        if depth < print_depth:
+            for action, child in self.children.items():
+                child.print_node(depth + 1, action, print_depth)
         print("-" * 80) if depth == 0 else None
 
-
-class AlphaZeroNetwork(nn.Module):
-    def __init__(self):
-        super(AlphaZeroNetwork, self).__init__()
-        input_num = 10  # TODO
-        hid_num = 16  # TODO
-        out_Num = 9  # TODO
-        self.policy_layers = nn.Sequential(
-            nn.Linear(input_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Linear(hid_num, out_Num),
-        )
-        self.policy_layers.apply(weight_init)
-
-        self.value_layers = nn.Sequential(
-            nn.Linear(input_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
-            nn.Linear(hid_num, 1),
-        )
-        self.value_layers.apply(weight_init)
-
-    def inference(self, x: torch.Tensor, mask: torch.Tensor = None):
-        # print(x, mask)
-        policy = self.policy_layers(x)
-        value = self.value_layers(x)
-        if mask is not None:
-            policy += mask.masked_fill(mask == 1, -np.inf)
-        return F.softmax(policy, dim=0), value
+    def _ucb_score(self, child: AlphaZeroNode):
+        pb_c_base = 19652  # TODO
+        pb_c_init = 1.25  # TODO
+        pb_c = np.log((self.visit_count + pb_c_base + 1) / pb_c_base) + pb_c_init
+        pb_c *= np.sqrt(self.visit_count) / (child.visit_count + 1)
+        prior_score = pb_c * child.prior
+        value_score = child.value
+        score = prior_score + value_score
+        return score
 
 
 class AlphaZeroAgent(Agent):
     def __init__(self):
         self.network = AlphaZeroNetwork()
 
-    def get_action(self, env):
+    def get_action(self, env, return_root=False):
         self.network.eval()
-        return self._run_mcts(env)
+        return self._run_mcts(env, return_root)
 
     def train(self, batch, optimizer):
         self.network.train()
-        p_loss = 0.0
-        v_loss = 0.0
-        # TODO: minibatch
-        for board, player, (target_value, target_policy) in batch:
-            obs = self._make_obs(board, player)
-            policy, value = self.network.inference(obs)
 
-            p_loss += -(torch.from_numpy(target_policy).float() * policy.log()).mean()
-            v_loss += F.mse_loss(value, torch.Tensor([target_value]).float())
-        p_loss /= len(batch)
-        v_loss /= len(batch)
+        observations, targets = zip(*batch)
+        observations = torch.from_numpy(np.array(observations)).float()
+        target_values, target_policies = zip(*targets)
+        target_values = torch.from_numpy(np.array(target_values)).unsqueeze(1).float()
+        target_policies = torch.from_numpy(np.array(target_policies)).float()
+
+        policy, value = self.network.inference(observations)
+        p_loss = -(target_policies * policy.log()).mean()
+        v_loss = F.mse_loss(value, target_values)
 
         optimizer.zero_grad()
         total_loss = p_loss + v_loss
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.network.parameters(), 0.5)
+        # torch.nn.utils.clip_grad_norm_(self.network.parameters(), 0.5)
         optimizer.step()
 
         return p_loss.item(), v_loss.item()
@@ -122,12 +156,14 @@ class AlphaZeroAgent(Agent):
         else:
             print(f"{filename} not found")
 
-    def _run_mcts(self, env):
-        root = AlphaZeroNode(0)
-        self._evaluate(root, env)
-        self._add_exploration_noise(root)
+    def _run_mcts(self, env, return_root=False):
+        root = AlphaZeroNode(0, env.player)
+        policy, _ = self._inference(env)
+        root.expand(env.legal_actions, policy, env.opponent_player)
+        root.add_exploration_noise()
+        # root.print_node()
 
-        num_simulations = 200  # TODO
+        num_simulations = 100  # TODO
         for i in range(num_simulations):
             # print(f"Simulation[{i+1}]")
             node = root
@@ -135,75 +171,47 @@ class AlphaZeroAgent(Agent):
             scratch_path = [node]
 
             while node.expanded:
-                action, node = self._select_child(node)
+                action, node = node.select_child()
                 scratch_env.step(action)
                 scratch_path.append(node)
-            # scratch_env.render()
-            # node.print_node()
-            value = self._evaluate(node, scratch_env)
-            self._backpropagate(scratch_path, value, scratch_env.player)
-        # root.print_node()
-        return self._select_action(env, root), root
 
-    def _evaluate(self, node: AlphaZeroNode, env):
-        obs = self._make_obs(env.board, env.player)
+            value = -self._evaluate(node, scratch_env)
+            self._backup(scratch_path, value)
+        action = root.select_action()
+        # root.print_node()
+
+        if return_root:
+            return action, root
+        return action
+
+    def _inference(self, env):
+        obs = torch.from_numpy(env.observation).float()
         mask = self._make_mask(env.legal_actions)
+        # print(obs, mask)
         policy, value = self.network.inference(obs, mask)
         # print(policy, value)
-
-        # expand
-        node.to_play = env.player
-        for action in env.legal_actions:
-            node.children[action] = AlphaZeroNode(policy[action].item())
-        # node.print_node()
-
-        return value.item()
-
-    def _make_obs(self, board, player):
-        obs = torch.from_numpy(np.concatenate([board, [player]])).float()
-        return obs
+        return policy.detach().numpy(), value.item()
 
     def _make_mask(self, legal_actions):
         mask = torch.ones(9)  # TODO
         mask[legal_actions] = 0.0
         return mask
 
-    def _add_exploration_noise(self, node: AlphaZeroNode):
-        root_dirichlet_alpha = 0.15  # TODO
-        root_exploration_fraction = 0.25  # TODO
-        # node.print_node()
-        actions = node.children.keys()
-        noise = np.random.gamma(root_dirichlet_alpha, 1, len(actions))
-        frac = root_exploration_fraction
-        for a, n in zip(actions, noise):
-            node.children[a].prior = (node.children[a].prior * (1 - frac)) + (n * frac)
-        # node.print_node()
+    def _evaluate(self, node: AlphaZeroNode, env):
+        if env.done:
+            if env.winner == env.EMPTY:
+                return 0  # 引き分け
+            elif env.winner != node.to_play:
+                return -1  # 負け
+            else:
+                return +1  # 勝ち
 
-    def _select_child(self, node: AlphaZeroNode):
-        ucb = {action: self._ucb_score(node, child) for action, child in node.children.items()}
-        max_ucb = max(ucb.items(), key=lambda x: x[1])
-        action = max_ucb[0]
-        # print(ucb, max_ucb)
-        return action, node.children[action]
+        policy, value = self._inference(env)
+        node.expand(env.legal_actions, policy, env.opponent_player)
+        return value
 
-    def _ucb_score(self, parent: AlphaZeroNode, child: AlphaZeroNode):
-        pb_c_base = 19652  # TODO
-        pb_c_init = 1.25  # TODO
-        pb_c = np.log((parent.visit_count + pb_c_base + 1) / pb_c_base) + pb_c_init
-        pb_c *= np.sqrt(parent.visit_count) / (child.visit_count + 1)
-        prior_score = pb_c * child.prior
-        value_score = child.value
-        score = prior_score + value_score
-        return score
-
-    def _backpropagate(self, scratch_path, value, to_play):
+    def _backup(self, scratch_path, value):
         for node in reversed(scratch_path):
-            node.value_sum += value if node.to_play == to_play else -value
+            node.value_sum += value
             node.visit_count += 1
-
-    def _select_action(self, env, root: AlphaZeroNode):
-        visits = {action: child.visit_count for action, child in root.children.items()}
-        # print(visits)
-        max_visit = max(visits.items(), key=lambda x: x[1])
-        action = max_visit[0]
-        return action
+            value = -value
