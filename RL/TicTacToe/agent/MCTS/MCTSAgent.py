@@ -1,114 +1,167 @@
 from __future__ import annotations
-from typing import Dict
+from typing import List
 import copy
 import numpy as np
+import logging
 
 from agent import Agent, RandomAgent
+from TicTacToe import TicTacToeEnv
+from logger import setup_logger
+
+logger = setup_logger(__name__, logging.INFO)
 
 
-# NegaMax type
-class MCTSNode:
-    def __init__(self, parent: MCTSNode = None):
-        self.parent = parent
-        self.visit_count = 0  # W
-        self.value_sum = 0  # Q
-        self.children: Dict[int, MCTSNode] = {}
+class Node:
+    def __init__(self, id: int, player: int):
+        self.id = id
+        self.player = player
+        self.edges: List[Edge] = []
 
-    def expand(self, actions):
-        for action in actions:
-            self.children[action] = MCTSNode(self)
+    def expand(self, actions: List[int], next_id: int = 1):
+        for i, action in enumerate(actions):
+            child = Node(next_id + i, -self.player)
+            edge = Edge(self, child, action)
+            self.edges.append(edge)
 
-    def select_child(self):
-        # print("select_child")
-        for action, child in self.children.items():
-            # 未探索の子を優先
-            if child.visit_count == 0:
-                return action, child
-        # UCB
-        # self.print_node()
-        ucb = {action: self._ucb_score(child) for action, child in self.children.items()}
-        max_ucb = max(ucb.items(), key=lambda x: x[1])
-        # print(ucb, max_ucb)
-        action = max_ucb[0]
-        return action, self.children[action]
+    def select_edge(self) -> Edge:
+        for edge in self.edges:
+            # 未探索のものを優先
+            if edge.visit_count == 0:
+                logger.debug("Unexplored edge: " + str(edge))
+                return edge
 
-    def backup(self, value):
-        self.visit_count += 1
-        self.value_sum += value
-        if self.parent:
-            self.parent.backup(-value)
+        # UCBを計算
+        self.print_node()
+        total_visit = sum([edge.visit_count for edge in self.edges])
+        ucb_scores = [edge.ucb_score(total_visit) for edge in self.edges]
+        max_idx = np.argmax(ucb_scores)
+        edge = self.edges[max_idx]
+        logger.debug(f"Max UCB: edge[{edge}]/score[{ucb_scores[max_idx]}]")
+        return edge
 
-    def _ucb_score(self, child: MCTSNode):
-        c = 1.0  # TODO
-        exploitation_value = child.value_sum / child.visit_count
-        exploration_value = np.sqrt(2.0 * np.log(self.visit_count) / child.visit_count)
-        ucb_score = exploitation_value + c * exploration_value
-        return ucb_score
+    def select_action(self) -> int:
+        visits = [edge.visit_count for edge in self.edges]
+        max_idx = np.argmax(visits)
+        action = self.edges[max_idx].action
+        logger.debug(f"Max action[{action}]/visits[{visits[max_idx]}]")
+        return action
 
     @property
     def expanded(self) -> bool:
-        return len(self.children) > 0
+        return len(self.edges) > 0
 
-    def print_node(self, depth=0, action=None):
-        print("- Node -" + "-" * 72) if depth == 0 else None
-        print("--" * depth, end="")
-        print(" ", end="") if depth != 0 else None
-        print(f"action:[{action}]: ", end="") if action is not None else None
-        print(f"id[{id(self)}]/visit_count[{self.visit_count}]/value_sum[{self.value_sum}]")
-        for action, child in self.children.items():
-            child.print_node(depth + 1, action)
-        print("-" * 80) if depth == 0 else None
+    def print_node(self, depth=0, limit_depth: int = None, edge_info: str = None):
+        if limit_depth and depth > limit_depth:
+            return
+        if depth == 0:
+            logger.debug("- Node -" + "-" * 72)
+        prefix_str = " " * depth + " - "
+        info_str = prefix_str + edge_info + " : " + str(self) if edge_info else str(self)
+        logger.debug(info_str)
+        for i, edge in enumerate(self.edges):
+            edge.out_node.print_node(depth=depth + 1, limit_depth=limit_depth, edge_info=str(edge))
+        if depth == 0:
+            logger.debug("-" * 80)
+
+    def __str__(self):
+        return f"id[{self.id}]/player[{self.player}]/edges[{len(self.edges)}]"
+
+
+class Edge:
+    def __init__(self, in_node: Node, out_node: Node, action: int):
+        self.id = str(in_node.id) + ":" + str(out_node.id)
+        self.player = in_node.player
+        self.action = action
+        self.visit_count = 0
+        self.value_sum = 0.0
+        self.in_node = in_node
+        self.out_node = out_node
+
+    def ucb_score(self, total_visit):
+        c = 1.0  # TODO
+        exploitation_value = self.value_sum / self.visit_count
+        exploration_value = np.sqrt(2.0 * np.log(total_visit) / self.visit_count)
+        ucb_score = exploitation_value + c * exploration_value
+        return ucb_score
+
+    def __str__(self):
+        return f"id[{self.id}]/player[{self.player}]/action[{self.action}]/N[{self.visit_count}]/W[{self.value_sum}]"
 
 
 class MCTSAgent(Agent):
     def __init__(self):
-        self.simulation_num = 500
+        self.simulation_num = 1000
         self.expand_th = 10
         self.random_agent = RandomAgent()
+        self.node_num = 0
 
-    def get_action(self, env):
-        return self._uct_search(env)
+    def get_action(self, env: TicTacToeEnv, return_root=False):
+        return self._run_mcts(env, return_root)
 
-    def _uct_search(self, env):
-        root = MCTSNode()
+    def _run_mcts(self, env: TicTacToeEnv, return_root=False):
+        logger.debug(f"*** Run MCTS ***")
+        root = Node(0, env.player)
         root.expand(env.legal_actions)
-        # root.print_node()
+        self.node_num = len(root.edges) + 1
+        root.print_node()
+
         for i in range(self.simulation_num):
-            # print(f"Simulation[{i+1}]")
+            logger.debug("#" * 80)
+            logger.debug(f"### *** Simulation[{i+1}] *** ###")
             temp_env = copy.deepcopy(env)
-            node = self._find_leaf(root, temp_env)
-            value = self._playout(temp_env)
-            node.backup(value)
-        # root.print_node()
-        visits = {action: child.visit_count for action, child in root.children.items()}
-        # print(visits)
-        max_visit = max(visits.items(), key=lambda x: x[1])
-        action = max_visit[0]
+            search_path = self._find_leaf(root, temp_env)
+            value = self._playout(temp_env, root.player)
+            self._backup(search_path, value, root.player)
+
+        logger.debug("#" * 80)
+        logger.debug("### *** Simulation complete *** ###")
+        root.print_node()
+        root.print_node(limit_depth=1)
+        action = root.select_action()
+
+        if return_root:
+            return action, root
         return action
 
-    def _find_leaf(self, node: MCTSNode, env):
+    def _find_leaf(self, node: Node, env: TicTacToeEnv) -> List[Edge]:
+        logger.debug(f"*** Find leaf ***")
+        search_path = []
+
+        edge = None
         while node.expanded:
-            action, node = node.select_child()
-            env.step(action)
+            edge = node.select_edge()
+            env.step(edge.action)
+            search_path.append(edge)
+            node = edge.out_node
 
-        # expand
-        if (node.visit_count >= self.expand_th) and (not env.done):
-            node.expand(env.legal_actions)
-            action = env.legal_actions[0]
-            node = node.children[action]
-            env.step(action)
-        return node
+        if edge and (edge.visit_count >= self.expand_th) and (not env.done):
+            logger.debug(f"Node expand(th=[{self.expand_th}])")
+            node.expand(env.legal_actions, self.node_num)
+            self.node_num += len(node.edges)
+            edge = node.select_edge()
+            env.step(edge.action)
+            search_path.append(edge)
+            node = edge.out_node
 
-    def _playout(self, env):
-        player = env.player
+        return search_path
+
+    def _playout(self, env: TicTacToeEnv, root_player: int):
         while not env.done:
             action = self.random_agent.get_action(env)
             env.step(action)
         value = 0
         if env.winner != 0:
-            if env.winner != player:
+            if env.winner == root_player:
                 value = +1
             else:
                 value = -1
         # env.render()
+        logger.debug(f"Playout result: winner[{env.winner}]/root[{root_player}] -> value[{value}]")
         return value
+
+    def _backup(self, search_path: List[Edge], value: int, root_player: int):
+        logger.debug(f"*** Backup ***")
+        for edge in reversed(search_path):
+            edge.visit_count += 1
+            edge.value_sum += value if edge.player == root_player else -value
+            logger.debug(edge)
