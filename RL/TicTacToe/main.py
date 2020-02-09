@@ -53,7 +53,7 @@ def main():
 
     env = TicTacToeEnv()
     agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
-    agent_b = agent_map["AlphaZero"]()
+    agent_b = agent_map["MCTS"]()
     agent_w = agent_map["MCTS"]()
 
     if isinstance(agent_b, AlphaZeroAgent):

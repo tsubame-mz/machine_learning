@@ -91,7 +91,7 @@ class Edge:
 class MCTSAgent(Agent):
     def __init__(self):
         self.simulation_num = 1000
-        self.expand_th = 10
+        self.expand_th = 5
         self.random_agent = RandomAgent()
         self.node_num = 0
 
@@ -110,8 +110,8 @@ class MCTSAgent(Agent):
             logger.debug(f"### *** Simulation[{i+1}] *** ###")
             temp_env = copy.deepcopy(env)
             search_path = self._find_leaf(root, temp_env)
-            value = self._playout(temp_env, root.player)
-            self._backup(search_path, value, root.player)
+            value = self._playout(temp_env, search_path[-1].player)
+            self._backup(search_path, value)
 
         logger.debug("#" * 80)
         logger.debug("### *** Simulation complete *** ###")
@@ -145,23 +145,24 @@ class MCTSAgent(Agent):
 
         return search_path
 
-    def _playout(self, env: TicTacToeEnv, root_player: int):
+    def _playout(self, env: TicTacToeEnv, player: int):
         while not env.done:
             action = self.random_agent.get_action(env)
             env.step(action)
         value = 0
         if env.winner != 0:
-            if env.winner == root_player:
+            if env.winner == player:
                 value = +1
             else:
                 value = -1
         # env.render()
-        logger.debug(f"Playout result: winner[{env.winner}]/root[{root_player}] -> value[{value}]")
+        logger.debug(f"Playout result: winner[{env.winner}]/player[{player}] -> value[{value}]")
         return value
 
-    def _backup(self, search_path: List[Edge], value: int, root_player: int):
+    def _backup(self, search_path: List[Edge], value: int):
         logger.debug(f"*** Backup ***")
+        player = search_path[-1].player
         for edge in reversed(search_path):
             edge.visit_count += 1
-            edge.value_sum += value if edge.player == root_player else -value
+            edge.value_sum += value if edge.player == player else -value
             logger.debug(edge)
