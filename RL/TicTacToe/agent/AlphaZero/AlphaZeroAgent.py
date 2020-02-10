@@ -1,88 +1,99 @@
 from __future__ import annotations
-from typing import Dict
+from typing import List
 import copy
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import os
+import logging
 
 from agent import Agent
+from TicTacToe import TicTacToeEnv
+from logger import setup_logger
+from .network import Network
+
+logger = setup_logger(__name__, logging.INFO)
 
 
-def weight_init(m):
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_normal_(m.weight)
-        nn.init.constant_(m.bias, 0)
+class Node:
+    def __init__(self, id: int, player: int):
+        self.id = id
+        self.player = player
+        self.edges: List[Edge] = []
 
-
-class AlphaZeroNetwork(nn.Module):
-    def __init__(self):
-        super(AlphaZeroNetwork, self).__init__()
-        input_num = 10  # TODO
-        hid_num = 32  # TODO
-        out_Num = 9  # TODO
-
-        self.common_layers = nn.Sequential(
-            nn.Linear(input_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
-        )
-        self.policy_layers = nn.Sequential(nn.Linear(hid_num, out_Num),)
-        self.value_layers = nn.Sequential(nn.Linear(hid_num, 1), nn.Tanh(),)  # ターンプレイヤーが勝ち=1, 負け=-1
-
-        self.common_layers.apply(weight_init)
-        self.policy_layers.apply(weight_init)
-        self.value_layers.apply(weight_init)
-
-    def inference(self, x: torch.Tensor, mask: torch.Tensor = None):
-        # print(x, mask)
-        h = self.common_layers(x)
-        policy = self.policy_layers(h)
-        value = self.value_layers(h)
-        if mask is not None:
-            policy += mask.masked_fill(mask == 1, -np.inf)
-        return F.softmax(policy, dim=0), value
-
-
-class AlphaZeroNode:
-    def __init__(self, prior, player):
-        self.prior = prior
-        self.visit_count = 0
-        self.value_sum = 0
-        self.to_play = player
-        self.children: Dict[int, AlphaZeroNode] = {}
-
-    def expand(self, legal_actions, policy, child_player):
-        for action in legal_actions:
-            self.children[action] = AlphaZeroNode(policy[action].item(), child_player)
+    def expand(self, actions: List[int], policy: List[float], next_id: int = 1):
+        for i, action in enumerate(actions):
+            child = Node(next_id + i, -self.player)
+            edge = Edge(self, child, action, policy[action])
+            self.edges.append(edge)
 
     def add_exploration_noise(self):
         root_dirichlet_alpha = 0.15  # TODO
         root_exploration_fraction = 0.25  # TODO
-        # node.print_node()
-        actions = self.children.keys()
-        noise = np.random.gamma(root_dirichlet_alpha, 1, len(actions))
+        noise = np.random.gamma(root_dirichlet_alpha, 1, len(self.edges))
         frac = root_exploration_fraction
-        for a, n in zip(actions, noise):
-            self.children[a].prior = (self.children[a].prior * (1 - frac)) + (n * frac)
-        # node.print_node()
+        for edge, n in zip(self.edges, noise):
+            edge.prior = (edge.prior * (1 - frac)) + (n * frac)
 
-    def select_child(self):
-        ucb = {action: self._ucb_score(child) for action, child in self.children.items()}
-        max_ucb = max(ucb.items(), key=lambda x: x[1])
-        action = max_ucb[0]
-        # print("UCB:", ucb, max_ucb)
-        return action, self.children[action]
+    def select_edge(self) -> Edge:
+        # UCBを計算
+        # self.print_node()
+        total_visit = sum([edge.visit_count for edge in self.edges])
+        ucb_scores = [edge.ucb_score(total_visit) for edge in self.edges]
+        max_idx = np.argmax(ucb_scores)
+        edge = self.edges[max_idx]
+        logger.debug("USB score: " + str(ucb_scores))
+        logger.debug(f"Max UCB: edge[{edge}]/score[{ucb_scores[max_idx]}]")
+        return edge
 
-    def select_action(self):
-        visits = {action: child.visit_count for action, child in self.children.items()}
-        # print("visits:", visits)
-        max_visit = max(visits.items(), key=lambda x: x[1])
-        action = max_visit[0]
+    def select_action(self) -> int:
+        visits = [edge.visit_count for edge in self.edges]
+        max_idx = np.argmax(visits)
+        action = self.edges[max_idx].action
+        logger.debug(f"Max action[{action}]/visits[{visits[max_idx]}]")
         return action
 
     @property
-    def expanded(self):
-        return len(self.children) > 0
+    def expanded(self) -> bool:
+        return len(self.edges) > 0
+
+    def print_node(self, depth=0, limit_depth: int = None, edge_info: str = None):
+        if limit_depth and depth > limit_depth:
+            return
+        if depth == 0:
+            logger.debug("- Node -" + "-" * 72)
+        prefix_str = " " * depth + " - "
+        info_str = prefix_str + edge_info + " : " + str(self) if edge_info else str(self)
+        logger.debug(info_str)
+        for i, edge in enumerate(self.edges):
+            edge.out_node.print_node(depth=depth + 1, limit_depth=limit_depth, edge_info=str(edge))
+        if depth == 0:
+            logger.debug("-" * 80)
+
+    def __str__(self):
+        return f"id[{self.id}]/player[{self.player}]/edges[{len(self.edges)}]"
+
+
+class Edge:
+    def __init__(self, in_node: Node, out_node: Node, action: int, prior: float):
+        self.id = str(in_node.id) + ":" + str(out_node.id)
+        self.player = in_node.player
+        self.action = action
+        self.visit_count = 0
+        self.value_sum = 0.0
+        self.prior = prior
+        self.in_node = in_node
+        self.out_node = out_node
+
+    def ucb_score(self, total_visit):
+        pb_c_base = 19652  # TODO
+        pb_c_init = 1.25  # TODO
+        pb_c = np.log((total_visit + pb_c_base + 1) / pb_c_base) + pb_c_init
+        pb_c *= np.sqrt(total_visit) / (self.visit_count + 1)
+        prior_score = pb_c * self.prior
+        value_score = self.value
+        score = prior_score + value_score
+        return score
 
     @property
     def value(self):
@@ -90,35 +101,17 @@ class AlphaZeroNode:
             return 0
         return self.value_sum / self.visit_count
 
-    def print_node(self, depth=0, action=None, print_depth=None):
-        print("- Node -" + "-" * 72) if depth == 0 else None
-        print("--" * depth, end="")
-        print(" ", end="") if depth != 0 else None
-        print(f"action:[{action}]: ", end="") if action is not None else None
-        print(
-            f"id[{id(self)}]/prior[{self.prior}]/visit_count[{self.visit_count}]/value_sum[{self.value_sum}]/to_play[{self.to_play}]"
-        )
-        if depth < print_depth:
-            for action, child in self.children.items():
-                child.print_node(depth + 1, action, print_depth)
-        print("-" * 80) if depth == 0 else None
-
-    def _ucb_score(self, child: AlphaZeroNode):
-        pb_c_base = 19652  # TODO
-        pb_c_init = 1.25  # TODO
-        pb_c = np.log((self.visit_count + pb_c_base + 1) / pb_c_base) + pb_c_init
-        pb_c *= np.sqrt(self.visit_count) / (child.visit_count + 1)
-        prior_score = pb_c * child.prior
-        value_score = child.value
-        score = prior_score + value_score
-        return score
+    def __str__(self):
+        return f"id[{self.id}]/player[{self.player}]/action[{self.action}]/N[{self.visit_count}]/W[{self.value_sum:.2f}]/P[{self.prior:.2f}]"
 
 
 class AlphaZeroAgent(Agent):
     def __init__(self):
-        self.network = AlphaZeroNetwork()
+        self.simulation_num = 100
+        self.network = Network()
+        self.node_num = 0
 
-    def get_action(self, env, return_root=False):
+    def get_action(self, env: TicTacToeEnv, return_root=False):
         self.network.eval()
         return self._run_mcts(env, return_root)
 
@@ -156,35 +149,34 @@ class AlphaZeroAgent(Agent):
         else:
             print(f"{filename} not found")
 
-    def _run_mcts(self, env, return_root=False):
-        root = AlphaZeroNode(0, env.player)
+    def _run_mcts(self, env: TicTacToeEnv, return_root=False):
+        logger.debug(f"*** Run MCTS ***")
+        root = Node(0, env.player)
         policy, _ = self._inference(env)
-        root.expand(env.legal_actions, policy, env.opponent_player)
+        root.expand(env.legal_actions, policy)
         root.add_exploration_noise()
+        self.node_num = len(root.edges) + 1
         # root.print_node()
 
-        num_simulations = 100  # TODO
-        for i in range(num_simulations):
-            # print(f"Simulation[{i+1}]")
-            node = root
-            scratch_env = copy.deepcopy(env)
-            scratch_path = [node]
+        for i in range(self.simulation_num):
+            logger.debug("#" * 80)
+            logger.debug(f"### *** Simulation[{i+1}] *** ###")
+            temp_env = copy.deepcopy(env)
+            search_path = self._find_leaf(root, temp_env)
+            value = self._evaluate(temp_env, search_path[-1])
+            self._backup(search_path, value)
 
-            while node.expanded:
-                action, node = node.select_child()
-                scratch_env.step(action)
-                scratch_path.append(node)
-
-            value = -self._evaluate(node, scratch_env)
-            self._backup(scratch_path, value)
+        logger.debug("#" * 80)
+        logger.debug("### *** Simulation complete *** ###")
+        # root.print_node()
+        # root.print_node(limit_depth=1)
         action = root.select_action()
-        # root.print_node()
 
         if return_root:
             return action, root
         return action
 
-    def _inference(self, env):
+    def _inference(self, env: TicTacToeEnv):
         obs = torch.from_numpy(env.observation).float()
         mask = self._make_mask(env.legal_actions)
         # print(obs, mask)
@@ -192,26 +184,42 @@ class AlphaZeroAgent(Agent):
         # print(policy, value)
         return policy.detach().numpy(), value.item()
 
-    def _make_mask(self, legal_actions):
+    def _make_mask(self, legal_actions: List[int]):
         mask = torch.ones(9)  # TODO
         mask[legal_actions] = 0.0
         return mask
 
-    def _evaluate(self, node: AlphaZeroNode, env):
+    def _find_leaf(self, node: Node, env: TicTacToeEnv) -> List[Edge]:
+        logger.debug(f"*** Find leaf ***")
+        search_path = []
+
+        edge = None
+        while node.expanded:
+            edge = node.select_edge()
+            env.step(edge.action)
+            search_path.append(edge)
+            node = edge.out_node
+
+        return search_path
+
+    def _evaluate(self, env: TicTacToeEnv, edge: Edge):
         if env.done:
-            if env.winner == env.EMPTY:
-                return 0  # 引き分け
-            elif env.winner != node.to_play:
-                return -1  # 負け
+            if env.winner == 0:
+                return 0
+            elif env.winner == edge.player:
+                return +1
             else:
-                return +1  # 勝ち
+                return -1
+        else:
+            policy, value = self._inference(env)
+            logger.debug(f"Node expand")
+            edge.out_node.expand(env.legal_actions, policy)
+            return -value  # 相手から見た価値なので反転させる
 
-        policy, value = self._inference(env)
-        node.expand(env.legal_actions, policy, env.opponent_player)
-        return value
-
-    def _backup(self, scratch_path, value):
-        for node in reversed(scratch_path):
-            node.value_sum += value
-            node.visit_count += 1
-            value = -value
+    def _backup(self, search_path: List[Edge], value: int):
+        logger.debug(f"*** Backup[value=[{value}]] ***")
+        player = search_path[-1].player
+        for edge in reversed(search_path):
+            edge.visit_count += 1
+            edge.value_sum += value if edge.player == player else -value
+            logger.debug(edge)

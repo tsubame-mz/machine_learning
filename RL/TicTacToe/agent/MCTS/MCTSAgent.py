@@ -31,7 +31,7 @@ class Node:
                 return edge
 
         # UCBを計算
-        self.print_node()
+        # self.print_node()
         total_visit = sum([edge.visit_count for edge in self.edges])
         ucb_scores = [edge.ucb_score(total_visit) for edge in self.edges]
         max_idx = np.argmax(ucb_scores)
@@ -103,7 +103,7 @@ class MCTSAgent(Agent):
         root = Node(0, env.player)
         root.expand(env.legal_actions)
         self.node_num = len(root.edges) + 1
-        root.print_node()
+        # root.print_node()
 
         for i in range(self.simulation_num):
             logger.debug("#" * 80)
@@ -115,8 +115,7 @@ class MCTSAgent(Agent):
 
         logger.debug("#" * 80)
         logger.debug("### *** Simulation complete *** ###")
-        root.print_node()
-        root.print_node(limit_depth=1)
+        # root.print_node(limit_depth=1)
         action = root.select_action()
 
         if return_root:
