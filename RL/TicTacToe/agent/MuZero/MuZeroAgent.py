@@ -268,7 +268,7 @@ class MuZeroAgent(Agent):
         # print(x)
         next_state, reward, policy_logit, value = self.network.recurrent_inference(x)
         policy = F.softmax(policy_logit, dim=1)
-        print(next_state, reward, policy, value)
+        # print(next_state, reward, policy, value)
         return next_state, reward.item(), policy[0], value.item()
 
     def _make_mask(self, legal_actions):
