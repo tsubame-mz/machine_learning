@@ -27,7 +27,13 @@ class Representation(nn.Module):
         self.layers.apply(weight_init)
 
     def inference(self, x):
-        return self.layers(x)
+        h = self.layers(x)
+
+        # [0, 1]にスケーリング
+        h_scaled = h - h.min(1, keepdim=True)[0]
+        h_scaled = h_scaled / h_scaled.max(1, keepdim=True)[0]
+        # print(h_scaled, h_scaled.min(1, keepdim=True)[0], h_scaled.max(1, keepdim=True)[0])
+        return h_scaled
 
 
 class Prediction(nn.Module):
@@ -66,11 +72,9 @@ class Prediction(nn.Module):
         # h = self.common_layers(x)
         # policy = self.policy_layers(h)
         # value = self.value_layers(h)
-        policy = self.policy_layers(x)
+        policy_logit = self.policy_layers(x)
         value = self.value_layers(x)
-        if mask is not None:
-            policy += mask.masked_fill(mask == 1, -np.inf)
-        return F.softmax(policy, dim=0), value
+        return policy_logit, value
 
 
 class Dynamics(nn.Module):
@@ -106,7 +110,14 @@ class Dynamics(nn.Module):
     def inference(self, x):
         # h = self.common_layers(x)
         # return self.state_layers(h), self.reward_layers(h)
-        return self.state_layers(x), self.reward_layers(x)
+        h = self.state_layers(x)
+
+        # [0, 1]にスケーリング
+        h_scaled = h - h.min(1, keepdim=True)[0]
+        h_scaled = h_scaled / h_scaled.max(1, keepdim=True)[0]
+        # print(h_scaled, h_scaled.min(1, keepdim=True)[0], h_scaled.max(1, keepdim=True)[0])
+
+        return h_scaled, self.reward_layers(x)
 
 
 class Network(nn.Module):
@@ -127,9 +138,9 @@ class Network(nn.Module):
         """
         # print(x, mask)
         state = self.representation.inference(x)
-        policy, value = self.prediction.inference(state, mask)
-        # print(state, policy, value)
-        return state, policy, value
+        policy_logit, value = self.prediction.inference(state, mask)
+        # print(state, policy_logit, value)
+        return state, policy_logit, value
 
     def recurrent_inference(self, x: torch.Tensor):
         """
@@ -137,6 +148,6 @@ class Network(nn.Module):
         """
         # print(x)
         next_state, reward = self.dynamics.inference(x)
-        policy, value = self.prediction.inference(next_state)
-        # print(next_state, reward, policy, value)
-        return next_state, reward, policy, value
+        policy_logit, value = self.prediction.inference(next_state)
+        # print(next_state, reward, policy_logit, value)
+        return next_state, reward, policy_logit, value

@@ -33,6 +33,7 @@ class GameBuffer:
         child_visit = [
             edge_map[action] / total_visit if action in edge_map else 0 for action in range(self.num_actions)
         ]
+        # print(child_visit)
         self.child_visits.append(child_visit)
 
     def set_winner(self, wineer):

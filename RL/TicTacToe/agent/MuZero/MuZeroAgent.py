@@ -167,7 +167,9 @@ class MuZeroAgent(Agent):
 
         obs = torch.FloatTensor(state_batch)
         # pprint(obs)
-        states, policies, values = self.network.initial_inference(obs)
+        states, policy_logits, values = self.network.initial_inference(obs)
+        policies = F.softmax(policy_logits, dim=1)
+
         # pprint(states)
         # pprint(policies)
         # pprint(values)
@@ -194,7 +196,8 @@ class MuZeroAgent(Agent):
             # pprint(one_hot)
             state_action = torch.cat([states[mask], torch.eye(9)[actions]], dim=1)
             # pprint(state_action)
-            states, rewards, policies, values = self.network.recurrent_inference(state_action)
+            states, rewards, policy_logits, values = self.network.recurrent_inference(state_action)
+            policies = F.softmax(policy_logits, dim=1)
             # pprint(next_states)
             # pprint(rewards)
             # pprint(policies)
@@ -249,23 +252,27 @@ class MuZeroAgent(Agent):
         return action
 
     def _initial_inference(self, env):
-        obs = torch.from_numpy(env.observation).float()
+        obs = torch.from_numpy(env.observation).unsqueeze(0).float()
         mask = self._make_mask(env.legal_actions)
         # print(obs, mask)
-        state, policy, _ = self.network.initial_inference(obs, mask)
-        # print(state, policy, value)
-        return state.detach(), policy.detach().numpy()
+        state, policy_logit, _ = self.network.initial_inference(obs, mask)
+
+        policy_logit += mask.masked_fill(mask == 1, -np.inf)
+        policy = F.softmax(policy_logit, dim=1)
+        # print(state, policy)
+
+        return state, policy[0]
 
     def _recurrent_inference(self, state, action):
-        x = torch.cat([state, torch.eye(9)[action]], dim=0)
+        x = torch.cat([state, torch.eye(9)[[action]]], dim=1)
         # print(x)
         next_state, reward, policy, value = self.network.recurrent_inference(x)
         # print(next_state, reward, policy, value)
-        return next_state.detach(), reward.item(), policy.detach().numpy(), value.item()
+        return next_state, reward.item(), policy[0], value.item()
 
     def _make_mask(self, legal_actions):
         mask = torch.ones(9)  # TODO
-        mask[legal_actions] = 0.0
+        mask[legal_actions] = 0
         return mask
 
     def _find_leaf(self, node: Node, min_max_stats: MinMaxStats) -> List[Edge]:
