@@ -38,21 +38,36 @@ class Prediction(nn.Module):
     def __init__(self, state_num, hid_num, action_num):
         super(Prediction, self).__init__()
 
-        self.common_layers = nn.Sequential(
-            nn.Linear(state_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
+        # self.common_layers = nn.Sequential(
+        #     nn.Linear(state_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
+        # )
+        self.policy_layers = nn.Sequential(
+            nn.Linear(state_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, action_num),
         )
-        self.policy_layers = nn.Sequential(nn.Linear(hid_num, action_num),)
-        self.value_layers = nn.Sequential(nn.Linear(hid_num, 1), nn.Tanh(),)
+        self.value_layers = nn.Sequential(
+            nn.Linear(state_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, 1),
+            nn.Tanh(),
+        )
 
-        self.common_layers.apply(weight_init)
+        # self.common_layers.apply(weight_init)
         self.policy_layers.apply(weight_init)
         self.value_layers.apply(weight_init)
 
     def inference(self, x: torch.Tensor, mask: torch.Tensor = None):
         # print(x, mask)
-        h = self.common_layers(x)
-        policy = self.policy_layers(h)
-        value = self.value_layers(h)
+        # h = self.common_layers(x)
+        # policy = self.policy_layers(h)
+        # value = self.value_layers(h)
+        policy = self.policy_layers(x)
+        value = self.value_layers(x)
         if mask is not None:
             policy += mask.masked_fill(mask == 1, -np.inf)
         return F.softmax(policy, dim=0), value
@@ -66,27 +81,40 @@ class Dynamics(nn.Module):
     def __init__(self, state_num, action_num, hid_num):
         super(Dynamics, self).__init__()
         input_num = state_num + action_num
-        self.common_layers = nn.Sequential(
-            nn.Linear(input_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
+        # self.common_layers = nn.Sequential(
+        #     nn.Linear(input_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
+        # )
+        self.state_layers = nn.Sequential(
+            nn.Linear(input_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, state_num),
         )
-        self.state_layers = nn.Sequential(nn.Linear(hid_num, state_num),)
-        self.reward_layers = nn.Sequential(nn.Linear(hid_num, 1), nn.Tanh(),)
+        self.reward_layers = nn.Sequential(
+            nn.Linear(input_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, 1),
+        )
 
-        self.common_layers.apply(weight_init)
+        # self.common_layers.apply(weight_init)
         self.state_layers.apply(weight_init)
         self.reward_layers.apply(weight_init)
 
     def inference(self, x):
-        h = self.common_layers(x)
-        return self.state_layers(h), self.reward_layers(h)
+        # h = self.common_layers(x)
+        # return self.state_layers(h), self.reward_layers(h)
+        return self.state_layers(x), self.reward_layers(x)
 
 
 class Network(nn.Module):
     def __init__(self):
         super(Network, self).__init__()
         input_num = 10  # TODO
-        hid_num = 32  # TODO
-        state_num = 16  # TODO
+        hid_num = 64  # TODO
+        state_num = 32  # TODO
         action_num = 9
 
         self.representation = Representation(input_num, hid_num, state_num)

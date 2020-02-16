@@ -2,8 +2,10 @@ from __future__ import annotations
 from typing import List, Optional
 import numpy as np
 import torch
+import torch.nn.functional as F
 import os
 import logging
+from itertools import zip_longest
 
 from agent import Agent
 from TicTacToe import TicTacToeEnv
@@ -29,7 +31,7 @@ class Node:
             self.edges.append(edge)
 
     def add_exploration_noise(self):
-        root_dirichlet_alpha = 0.15  # TODO
+        root_dirichlet_alpha = 0.25  # TODO
         root_exploration_fraction = 0.25  # TODO
         noise = np.random.gamma(root_dirichlet_alpha, 1, len(self.edges))
         frac = root_exploration_fraction
@@ -108,14 +110,16 @@ class Edge:
 
 
 class MuZeroAgent(Agent):
-    def __init__(self):
-        self.simulation_num = 100
+    def __init__(self, discount=0.95):
+        self.simulation_num = 20  # TODO
         self.network = Network()
         self.node_num = 0
+        self.discount = discount
 
     def get_action(self, env: TicTacToeEnv, return_root=False):
         self.network.eval()
-        return self._run_mcts(env, return_root)
+        with torch.no_grad():
+            return self._run_mcts(env, return_root)
 
     def save_model(self, filename):
         print(f"Save model: {filename}")
@@ -132,26 +136,88 @@ class MuZeroAgent(Agent):
 
     def train(self, batch, optimizer):
         self.network.train()
-        [print("batch", b) for b in batch]
 
-        # observations, targets = zip(*batch)
-        # observations = torch.from_numpy(np.array(observations)).float()
-        # target_values, target_policies = zip(*targets)
-        # target_values = torch.from_numpy(np.array(target_values)).unsqueeze(1).float()
-        # target_policies = torch.from_numpy(np.array(target_policies)).float()
+        # make mask for BPTT
+        state_batch, action_batch, target_batch = zip(*batch)
+        target_init_batch, *target_recur_batch = zip_longest(*target_batch)
 
-        # policy, value = self.network.inference(observations)
-        # p_loss = -(target_policies * policy.log()).mean()
-        # v_loss = F.mse_loss(value, target_values)
+        mask_batch = []
+        last_mask = [True] * len(state_batch)
+        action_batch = list(zip_longest(*action_batch))
+        for i, actions in enumerate(action_batch):
+            mask = list(map(lambda a: a is not None, actions))
+            recur_mask = [now for last, now in zip(last_mask, mask) if last]
+            mask_batch.append(recur_mask)
+            last_mask = mask
+            action_batch[i] = [action for action in actions if action is not None]  # Noneを除去する
 
-        # optimizer.zero_grad()
-        # total_loss = p_loss + v_loss
-        # total_loss.backward()
-        # # torch.nn.utils.clip_grad_norm_(self.network.parameters(), 0.5)
-        # optimizer.step()
+        for i, recur_batch in enumerate(target_recur_batch):
+            target_recur_batch[i] = [target for target in recur_batch if target is not None]  # Noneを除去する
 
-        # return p_loss.item(), v_loss.item()
-        return None
+        return self._update_weight(
+            optimizer, state_batch, action_batch, target_init_batch, target_recur_batch, mask_batch
+        )
+
+    def _update_weight(self, optimizer, state_batch, action_batch, target_init_batch, target_recur_batch, mask_batch):
+        # pprint(state_batch)
+        # pprint(action_batch)
+        # pprint(target_init_batch)
+        # pprint(target_recur_batch)
+        # pprint(mask_batch)
+
+        obs = torch.FloatTensor(state_batch)
+        # pprint(obs)
+        states, policies, values = self.network.initial_inference(obs)
+        # pprint(states)
+        # pprint(policies)
+        # pprint(values)
+        target_policies, target_values, _ = zip(*target_init_batch)
+        target_policies = torch.FloatTensor(target_policies)
+        target_values = torch.FloatTensor(target_values).unsqueeze(1)
+        # pprint(target_policies)
+        # pprint(target_values)
+        p_loss = -(target_policies * policies.log()).mean()
+        v_loss = F.mse_loss(target_values, values)
+        r_loss = 0.0
+        # print(p_loss, v_loss, r_loss)
+
+        gradient_scale = 1.0 / len(action_batch)
+        # pprint("--- Recurrent_inference ---")
+        # pprint(gradient_scale)
+        for actions, mask, target in zip(action_batch, mask_batch, target_recur_batch):
+            # pprint("--- BPTT ---")
+            actions = torch.LongTensor(actions)
+            # pprint(actions)
+            # pprint(mask)
+            # pprint(states)
+            # one_hot = torch.eye(9)[actions]
+            # pprint(one_hot)
+            state_action = torch.cat([states[mask], torch.eye(9)[actions]], dim=1)
+            # pprint(state_action)
+            states, rewards, policies, values = self.network.recurrent_inference(state_action)
+            # pprint(next_states)
+            # pprint(rewards)
+            # pprint(policies)
+            # pprint(values)
+            target_policies, target_values, target_rewards = zip(*target)
+            target_policies = torch.FloatTensor(target_policies)
+            target_values = torch.FloatTensor(target_values).unsqueeze(1)
+            target_rewards = torch.FloatTensor(target_rewards).unsqueeze(1)
+            # pprint(target_policies)
+            # pprint(target_values)
+            # pprint(target_rewards)
+            p_loss += gradient_scale * (-(target_policies * policies.log()).mean())
+            v_loss += gradient_scale * F.mse_loss(target_values, values)
+            r_loss += gradient_scale * F.mse_loss(target_rewards, rewards)
+        # print(p_loss, v_loss, r_loss)
+
+        optimizer.zero_grad()
+        total_loss = p_loss + v_loss + r_loss
+        total_loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.network.parameters(), 0.5)
+        optimizer.step()
+
+        return total_loss.item(), p_loss.item(), v_loss.item(), r_loss.item()
 
     def _run_mcts(self, env, return_root=False):
         logger.debug(f"*** Run MCTS ***")
@@ -228,11 +294,10 @@ class MuZeroAgent(Agent):
 
     def _backup(self, search_path: List[Edge], value: float, min_max_stats: MinMaxStats):
         logger.debug(f"*** Backup[value=[{value}]] ***")
-        discount = 0.95  # TODO
         player = search_path[-1].player
         for edge in reversed(search_path):
             edge.visit_count += 1
             edge.value_sum += value if edge.player == player else -value
             min_max_stats.update(edge.value)
-            value = edge.reward + discount * value
+            value = edge.reward + self.discount * value
             logger.debug(edge)

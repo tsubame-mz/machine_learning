@@ -9,15 +9,16 @@ logger = setup_logger(__name__, logging.INFO)
 
 
 class GameBuffer:
-    def __init__(self):
-        self.observations = []
-        self.players = []
+    def __init__(self, obs, player, discount):
+        self.observations = [obs]
+        self.players = [player]
         self.actions = []
+        self.child_visits = []
         self.values = []
         self.rewards = []
-        self.child_visits = []
         self.winner = TicTacToeEnv.EMPTY
         self.num_actions = 9
+        self.discount = discount
 
     def append(self, obs, player, action):
         self.observations.append(obs)
@@ -36,55 +37,60 @@ class GameBuffer:
 
     def set_winner(self, wineer):
         self.winner = wineer
-        discount = 0.95  # TODO
+        self.values.append(0.0)
+        self.child_visits.append([1.0 / self.num_actions for _ in range(self.num_actions)])
         for i in range(len(self.observations)):
             if self.winner != 0:
                 player = self.players[i]
                 value = +1 if self.winner == player else -1
-                value *= discount ** (len(self.observations) - (i + 1))
+                value *= self.discount ** (len(self.observations) - (i + 1))
             else:
                 value = 0
             self.values[i] = value
 
         if wineer != 0:
-            if self.players[-1] == wineer:
-                self.rewards[-1] = 1.0
+            if self.players[-1] != wineer:
+                self.rewards[-1] = +1.0
             else:
                 self.rewards[-1] = -1.0
 
     def make_target(self, state_index: int, unroll_steps: int):
-        target_values = self.values[state_index : state_index + unroll_steps + 1]
-        target_policies = self.child_visits[state_index : state_index + unroll_steps + 1]
-        target_rewards = [0.0] + self.rewards[state_index : state_index + unroll_steps]
-        if len(target_values) < (unroll_steps + 1):
-            target_values.append(0.0)
-            target_policies.append([1.0 / self.num_actions for _ in range(self.num_actions)])
-        assert len(target_values) == len(target_policies) == len(target_rewards)
-        return target_values, np.array(target_policies), target_rewards
+        return list(
+            zip(
+                self.child_visits[state_index : state_index + unroll_steps + 1],
+                self.values[state_index : state_index + unroll_steps + 1],
+                [0.0] + self.rewards[state_index : state_index + unroll_steps],
+            )
+        )
 
     def print_buffer(self):
-        for i in range(len(self.observations)):
-            print(
-                f"obs[{self.observations[i]}]/player[{self.players[i]}]/action[{self.actions[i]}]/value[{self.values[i]:.4f}]/reward[{self.rewards[i]}]/policy[{self.child_visits[i]}]"
-            )
-        print(f"winner[{self.winner}]")
+        print("--- Buffer ---")
+        print("observations: ", self.observations)
+        print("players: ", self.players)
+        print("actions: ", self.actions)
+        print("values: ", self.values)
+        print("rewards: ", self.rewards)
+        print("child_visits: ", self.child_visits)
+        print("winner: ", self.winner)
+        print("--------------")
 
 
 class ReplayBuffer:
-    def __init__(self, window_size: int, batch_size: int):
+    def __init__(self, window_size: int, batch_size: int, unroll_steps: int):
         self.window_size = window_size
         self.batch_size = batch_size
         self.buffer: List[GameBuffer] = []
+        self.unroll_steps = unroll_steps
 
     def append(self, game: GameBuffer):
-        if len(self.buffer) > self.window_size:
+        if len(self.buffer) >= self.window_size:
             self.buffer.pop(0)
         self.buffer.append(game)
 
     def sample_batch(self):
-        unroll_steps = 5  # TODO
         games = np.random.choice(self.buffer, self.batch_size)
         game_pos = [(g, np.random.randint(len(g.observations))) for g in games]
         return [
-            (g.observations[i], g.actions[i : i + unroll_steps], g.make_target(i, unroll_steps)) for (g, i) in game_pos
+            (g.observations[i], g.actions[i : i + self.unroll_steps], g.make_target(i, self.unroll_steps))
+            for (g, i) in game_pos
         ]
