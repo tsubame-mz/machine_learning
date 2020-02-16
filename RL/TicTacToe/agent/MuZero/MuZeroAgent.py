@@ -165,9 +165,9 @@ class MuZeroAgent(Agent):
         # pprint(target_recur_batch)
         # pprint(mask_batch)
 
-        obs = torch.FloatTensor(state_batch)
-        # pprint(obs)
-        states, policy_logits, values = self.network.initial_inference(obs)
+        x = torch.FloatTensor(state_batch)
+        # pprint(x)
+        states, policy_logits, values = self.network.initial_inference(x)
         policies = F.softmax(policy_logits, dim=1)
 
         # pprint(states)
@@ -252,10 +252,10 @@ class MuZeroAgent(Agent):
         return action
 
     def _initial_inference(self, env):
-        obs = torch.from_numpy(env.observation).unsqueeze(0).float()
+        x = torch.from_numpy(env.observation).unsqueeze(0).float()
         mask = self._make_mask(env.legal_actions)
         # print(obs, mask)
-        state, policy_logit, _ = self.network.initial_inference(obs, mask)
+        state, policy_logit, _ = self.network.initial_inference(x, mask)
 
         policy_logit += mask.masked_fill(mask == 1, -np.inf)
         policy = F.softmax(policy_logit, dim=1)
@@ -266,8 +266,9 @@ class MuZeroAgent(Agent):
     def _recurrent_inference(self, state, action):
         x = torch.cat([state, torch.eye(9)[[action]]], dim=1)
         # print(x)
-        next_state, reward, policy, value = self.network.recurrent_inference(x)
-        # print(next_state, reward, policy, value)
+        next_state, reward, policy_logit, value = self.network.recurrent_inference(x)
+        policy = F.softmax(policy_logit, dim=1)
+        print(next_state, reward, policy, value)
         return next_state, reward.item(), policy[0], value.item()
 
     def _make_mask(self, legal_actions):
