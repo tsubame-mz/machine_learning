@@ -159,60 +159,32 @@ class MuZeroAgent(Agent):
         )
 
     def _update_weight(self, optimizer, state_batch, action_batch, target_init_batch, target_recur_batch, mask_batch):
-        # pprint(state_batch)
-        # pprint(action_batch)
-        # pprint(target_init_batch)
-        # pprint(target_recur_batch)
-        # pprint(mask_batch)
-
         x = torch.FloatTensor(state_batch)
-        # pprint(x)
         states, policy_logits, values = self.network.initial_inference(x)
         policies = F.softmax(policy_logits, dim=1)
 
-        # pprint(states)
-        # pprint(policies)
-        # pprint(values)
         target_policies, target_values, _ = zip(*target_init_batch)
         target_policies = torch.FloatTensor(target_policies)
         target_values = torch.FloatTensor(target_values).unsqueeze(1)
-        # pprint(target_policies)
-        # pprint(target_values)
         p_loss = -(target_policies * policies.log()).mean()
         v_loss = F.mse_loss(target_values, values)
         r_loss = 0.0
-        # print(p_loss, v_loss, r_loss)
 
         gradient_scale = 1.0 / len(action_batch)
-        # pprint("--- Recurrent_inference ---")
-        # pprint(gradient_scale)
         for actions, mask, target in zip(action_batch, mask_batch, target_recur_batch):
-            # pprint("--- BPTT ---")
             actions = torch.LongTensor(actions)
-            # pprint(actions)
-            # pprint(mask)
-            # pprint(states)
-            # one_hot = torch.eye(9)[actions]
-            # pprint(one_hot)
             state_action = torch.cat([states[mask], torch.eye(9)[actions]], dim=1)
-            # pprint(state_action)
             states, rewards, policy_logits, values = self.network.recurrent_inference(state_action)
             policies = F.softmax(policy_logits, dim=1)
-            # pprint(next_states)
-            # pprint(rewards)
-            # pprint(policies)
-            # pprint(values)
+
             target_policies, target_values, target_rewards = zip(*target)
             target_policies = torch.FloatTensor(target_policies)
             target_values = torch.FloatTensor(target_values).unsqueeze(1)
             target_rewards = torch.FloatTensor(target_rewards).unsqueeze(1)
-            # pprint(target_policies)
-            # pprint(target_values)
-            # pprint(target_rewards)
+
             p_loss += gradient_scale * (-(target_policies * policies.log()).mean())
             v_loss += gradient_scale * F.mse_loss(target_values, values)
             r_loss += gradient_scale * F.mse_loss(target_rewards, rewards)
-        # print(p_loss, v_loss, r_loss)
 
         optimizer.zero_grad()
         total_loss = p_loss + v_loss + r_loss
