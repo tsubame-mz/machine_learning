@@ -5,7 +5,7 @@ from torch.utils.tensorboard import SummaryWriter
 from TicTacToe import TicTacToeEnv
 from agent import MuZeroAgent
 from agent.MuZero import GameBuffer, ReplayBuffer
-from ralamb import Ralamb
+import radam
 
 
 def play_game(env, agent):
@@ -93,8 +93,8 @@ def main():
     env = TicTacToeEnv()
     agent = MuZeroAgent(discount=discount)
     replay = ReplayBuffer(replay_buffer_size, batch_size, unroll_steps)
-    # optimizer = Ralamb(agent.network.parameters(), lr=1e-4, weight_decay=1e-6)
-    optimizer = torch.optim.SGD(agent.network.parameters(), lr=1e-2, momentum=0.9, weight_decay=1e-6, nesterov=True)
+    # optimizer = torch.optim.SGD(agent.network.parameters(), lr=1e-4, momentum=0.9, weight_decay=1e-6, nesterov=True)
+    optimizer = radam.RAdam(agent.network.parameters(), lr=1e-2, weight_decay=1e-6)
 
     agent.load_model("muzero_model.pth")
     try:
