@@ -1,11 +1,11 @@
 from __future__ import annotations
-from typing import List
+from typing import List, Dict, Tuple
+import gym
 import copy
 import numpy as np
 import logging
 
 from agent import Agent, RandomAgent
-from TicTacToe import TicTacToeEnv
 from logger import setup_logger
 
 logger = setup_logger(__name__, logging.INFO)
@@ -19,7 +19,7 @@ class Node:
 
     def expand(self, actions: List[int], next_id: int = 1):
         for i, action in enumerate(actions):
-            child = Node(next_id + i, -self.player)
+            child = Node(next_id + i, (self.player + 1) % 2)
             edge = Edge(self, child, action)
             self.edges.append(edge)
 
@@ -95,13 +95,13 @@ class MCTSAgent(Agent):
         self.random_agent = RandomAgent()
         self.node_num = 0
 
-    def get_action(self, env: TicTacToeEnv, return_root=False):
-        return self._run_mcts(env, return_root)
+    def get_action(self, env: gym.Env, obs: Dict, return_root=False):
+        return self._run_mcts(env, obs, return_root)
 
-    def _run_mcts(self, env: TicTacToeEnv, return_root=False):
+    def _run_mcts(self, env: gym.Env, obs: Dict, return_root=False):
         logger.debug(f"*** Run MCTS ***")
-        root = Node(0, env.player)
-        root.expand(env.legal_actions)
+        root = Node(0, obs["to_play"])
+        root.expand(obs["legal_actions"])
         self.node_num = len(root.edges) + 1
         # root.print_node()
 
@@ -109,53 +109,59 @@ class MCTSAgent(Agent):
             logger.debug("#" * 80)
             logger.debug(f"### *** Simulation[{i+1}] *** ###")
             temp_env = copy.deepcopy(env)
-            search_path = self._find_leaf(root, temp_env)
-            value = self._playout(temp_env, search_path[-1].player)
+            search_path, temp_obs, temp_done = self._find_leaf(root, temp_env)
+            value = self._playout(temp_env, temp_obs, temp_done, search_path[-1].player)
             self._backup(search_path, value)
 
         logger.debug("#" * 80)
         logger.debug("### *** Simulation complete *** ###")
         # root.print_node(limit_depth=1)
+        # root.print_node()
         action = root.select_action()
 
         if return_root:
             return action, root
         return action
 
-    def _find_leaf(self, node: Node, env: TicTacToeEnv) -> List[Edge]:
+    def _find_leaf(self, node: Node, env: gym.Env) -> Tuple:
         logger.debug(f"*** Find leaf ***")
         search_path = []
 
         edge = None
+        temp_done = False
         while node.expanded:
             edge = node.select_edge()
-            env.step(edge.action)
+            temp_obs, _, temp_done, _ = env.step(edge.action)
             search_path.append(edge)
             node = edge.out_node
 
-        if edge and (edge.visit_count >= self.expand_th) and (not env.done):
+        assert temp_obs is not None
+        if edge and (edge.visit_count >= self.expand_th) and (not temp_done):
             logger.debug(f"Node expand(th=[{self.expand_th}])")
-            node.expand(env.legal_actions, self.node_num)
+            node.expand(temp_obs["legal_actions"], self.node_num)
             self.node_num += len(node.edges)
             edge = node.select_edge()
-            env.step(edge.action)
+            temp_obs, _, temp_done, _ = env.step(edge.action)
             search_path.append(edge)
             node = edge.out_node
 
-        return search_path
+        return search_path, temp_obs, temp_done
 
-    def _playout(self, env: TicTacToeEnv, player: int):
-        while not env.done:
-            action = self.random_agent.get_action(env)
-            env.step(action)
+    def _playout(self, env: gym.Env, obs: Dict, done: bool, player: int):
+        while not done:
+            action = self.random_agent.get_action(env, obs)
+            obs, _, done, _ = env.step(action)
         value = 0
-        if env.winner != 0:
-            if env.winner == player:
+        winner = obs["winner"]
+        if winner is not None:
+            if winner == player:
                 value = +1
             else:
                 value = -1
         # env.render()
-        logger.debug(f"Playout result: winner[{env.winner}]/player[{player}] -> value[{value}]")
+        logger.debug(
+            f"Playout result: winner[{winner if winner is not None else 'None'}]/player[{player}] -> value[{value}]"
+        )
         return value
 
     def _backup(self, search_path: List[Edge], value: int):

@@ -6,7 +6,7 @@ authors = ["tsubame-mz <rainy.garden777@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.7"
-gym = "^0.15.4"
+gym = "^0.16.0"
 absl-py = "^0.9.0"
 tqdm = "^4.41.0"
 gym-minigrid = "^1.0.0"
@@ -19,6 +19,7 @@ psutil = "^5.7.0"
 setproctitle = "^1.1.10"
 grpcio = "^1.27.2"
 radam = {git = "https://github.com/LiyuanLucasLiu/RAdam.git"}
+gym-tictactoe = {git = "https://github.com/tsubame-mz/gym_tictactoe.git"}
 
 [tool.poetry.dev-dependencies]
 flake8 = "^3.7.9"

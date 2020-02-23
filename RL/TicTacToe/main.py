@@ -1,8 +1,11 @@
+import copy
 import numpy as np
 import torch
+import gym
+import gym_tictactoe  # NOQA
 
-from TicTacToe import TicTacToeEnv
-from agent import RandomAgent, MCTSAgent, AlphaZeroAgent
+# from agent import RandomAgent, MCTSAgent, AlphaZeroAgent
+from agent import RandomAgent, MCTSAgent
 
 
 def set_seed(seed):
@@ -11,24 +14,26 @@ def set_seed(seed):
 
 
 def play_game(env, agent_b, agent_w):
-    env.reset()
-    while not env.done:
+    obs = env.reset()
+    done = False
+    while not done:
         # print("-" * 80)
         # env.render()
-        # obs = env.board
-        if env.player == env.BLACK:
-            action = agent_b.get_action(env)
+        player = obs["to_play"]
+        if player == 0:
+            action = agent_b.get_action(copy.deepcopy(env), obs)
         else:
-            action = agent_w.get_action(env)
+            action = agent_w.get_action(copy.deepcopy(env), obs)
+        next_obs, reward, done, _ = env.step(action)
         # print("obs: ", obs)
         # print("action: ", action)
-        env.step(action)
-        # print("next obs: ", env.board)
-        # print("winner: ", env.winner)
-        # print("done: ", env.done)
+        # print("next obs: ", next_obs)
+        # print("reward: ", reward)
+        # print("done: ", done)
+        obs = next_obs
     # print("-" * 80)
     env.render()
-    return env.winner
+    return obs["winner"]
 
 
 def match(num, env, agent_b, agent_w):
@@ -36,30 +41,31 @@ def match(num, env, agent_b, agent_w):
     win_w_cnt = 0
     draw_cnt = 0
     for i in range(num):
-        print(f"Game[{i+1}]")
+        print(f"--- Game[{i+1}] ---")
         winner = play_game(env, agent_b, agent_w)
-        if winner == env.BLACK:
-            win_b_cnt += 1
-        elif winner == env.WHITE:
-            win_w_cnt += 1
-        else:
+        print(f"Winner[{winner if winner is not None else 'None'}]")
+        if winner is None:
             draw_cnt += 1
+        elif winner == env.BLACK:
+            win_b_cnt += 1
+        else:
+            win_w_cnt += 1
     return win_b_cnt, win_w_cnt, draw_cnt
 
 
 def main():
-    # seed = 0
-    # set_seed(seed)
+    # set_seed(0)
 
-    env = TicTacToeEnv()
-    agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
-    agent_b = agent_map["AlphaZero"]()
+    env = gym.make("tictactoe-v0")
+    # agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
+    agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent}
+    agent_b = agent_map["MCTS"]()
     agent_w = agent_map["MCTS"]()
 
-    if isinstance(agent_b, AlphaZeroAgent):
-        agent_b.load_model("alphazero_model.pth")
-    if isinstance(agent_w, AlphaZeroAgent):
-        agent_w.load_model("alphazero_model.pth")
+    # if isinstance(agent_b, AlphaZeroAgent):
+    #     agent_b.load_model("alphazero_model.pth")
+    # if isinstance(agent_w, AlphaZeroAgent):
+    #     agent_w.load_model("alphazero_model.pth")
 
     win_agent_b = 0
     win_agent_w = 0
