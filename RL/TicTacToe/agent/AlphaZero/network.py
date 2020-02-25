@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
 
 
 def weight_init(m):
@@ -10,29 +8,87 @@ def weight_init(m):
         nn.init.constant_(m.bias, 0)
 
 
-class Network(nn.Module):
-    def __init__(self):
-        super(Network, self).__init__()
-        input_num = 10  # TODO
-        hid_num = 32  # TODO
-        out_Num = 9  # TODO
+def conv3x3(in_channels, out_channels):
+    return nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
 
-        self.common_layers = nn.Sequential(
-            nn.Linear(input_num, hid_num), nn.ReLU(inplace=True), nn.Linear(hid_num, hid_num), nn.ReLU(inplace=True),
+
+class ResNetBlock(nn.Module):
+    def __init__(self, num_channels):
+        super(ResNetBlock, self).__init__()
+        self.layers = nn.Sequential(
+            conv3x3(num_channels, num_channels),
+            nn.BatchNorm2d(num_channels),
+            nn.ReLU(inplace=True),
+            conv3x3(num_channels, num_channels),
+            nn.BatchNorm2d(num_channels),
         )
-        self.policy_layers = nn.Sequential(nn.Linear(hid_num, out_Num),)
-        self.value_layers = nn.Sequential(nn.Linear(hid_num, 1), nn.Tanh(),)
+        self.relu = nn.ReLU(inplace=True)
 
-        self.common_layers.apply(weight_init)
-        self.policy_layers.apply(weight_init)
-        self.value_layers.apply(weight_init)
+    def forward(self, x: torch.Tensor):  # type: ignore
+        return self.relu(x + self.layers(x))
 
-    def inference(self, x: torch.Tensor, mask: torch.Tensor = None):
-        # print(x, mask)
-        h = self.common_layers(x)
-        policy = self.policy_layers(h)
-        value = self.value_layers(h)
-        if mask is not None:
-            policy += mask.masked_fill(mask == 1, -np.inf)
-        return F.softmax(policy, dim=0), value
 
+class ResNet(nn.Module):
+    def __init__(self, in_channels, num_channels):
+        super(ResNet, self).__init__()
+        self.layers = nn.Sequential(
+            conv3x3(in_channels, num_channels),
+            nn.BatchNorm2d(num_channels),
+            nn.ReLU(inplace=True),
+            ResNetBlock(num_channels),
+            ResNetBlock(num_channels),
+        )
+
+    def forward(self, x: torch.Tensor):  # type: ignore
+        return self.layers(x)
+
+
+class MLP(nn.Module):
+    def __init__(self, input_Num, hid_num, output_num):
+        super(MLP, self).__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(input_Num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, hid_num),
+            nn.ReLU(inplace=True),
+            nn.Linear(hid_num, output_num),
+        )
+        self.layers.apply(weight_init)
+
+    def forward(self, x: torch.Tensor):  # type: ignore
+        return self.layers(x)
+
+
+class AlphaZeroNetwork(nn.Module):
+    def __init__(self, obs_space, num_channels, fc_hid_num, fc_output_num):
+        super(AlphaZeroNetwork, self).__init__()
+        self.num_channels = num_channels
+        in_channels = obs_space[0]
+        self.resnet = ResNet(in_channels, num_channels)
+
+        ch_h = obs_space[1]
+        ch_w = obs_space[2]
+        self.fc_input_num = num_channels * ch_h * ch_w
+        self.policy_layers = MLP(self.fc_input_num, fc_hid_num, fc_output_num)
+        self.value_layers = MLP(self.fc_input_num, fc_hid_num, 1)
+
+    def inference(self, x: torch.Tensor):
+        h = self.resnet(x)
+        h = h.view(-1, self.fc_input_num)
+        return self.policy_layers(h), self.value_layers(h)
+
+
+if __name__ == "__main__":
+    obs_space = (3, 3, 3)
+    num_channels = 8
+    fc_hid_num = 16
+    fc_output_num = 9
+    batch_size = 4
+
+    network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num)
+    print(network)
+    x = torch.randn((batch_size, obs_space[0], obs_space[1], obs_space[2]))
+    print(x)
+    policy_logits, value_logits = network.inference(x)
+    print(policy_logits)
+    print(value_logits)

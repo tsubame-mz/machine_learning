@@ -1,16 +1,20 @@
 from __future__ import annotations
-from typing import List
+
 import copy
+import logging
+import os
+from typing import Dict, List, Tuple
+
+import gym
 import numpy as np
 import torch
 import torch.nn.functional as F
-import os
-import logging
 
+import gym_tictactoe  # NOQA
 from agent import Agent
-from TicTacToe import TicTacToeEnv
 from logger import setup_logger
-from .network import Network
+
+from .network import AlphaZeroNetwork
 
 logger = setup_logger(__name__, logging.INFO)
 
@@ -23,7 +27,7 @@ class Node:
 
     def expand(self, actions: List[int], policy: List[float], next_id: int = 1):
         for i, action in enumerate(actions):
-            child = Node(next_id + i, -self.player)
+            child = Node(next_id + i, (self.player + 1) % 2)
             edge = Edge(self, child, action, policy[action])
             self.edges.append(edge)
 
@@ -105,15 +109,23 @@ class Edge:
         return f"id[{self.id}]/player[{self.player}]/action[{self.action}]/N[{self.visit_count}]/W[{self.value_sum:.2f}]/P[{self.prior:.2f}]"
 
 
-class AlphaZeroAgent(Agent):
+class AlphaZeroAgent(Agent):  # type: ignore
+    # TODO:
+    # value support: 価値のカテゴリ分布化
+    # value discount: 割引報酬
     def __init__(self):
-        self.simulation_num = 100
-        self.network = Network()
+        self.simulation_num = 20
+        obs_space = (3, 3, 3)  # TODO
+        num_channels = 8  # TODO
+        fc_hid_num = 16  # TODO
+        fc_output_num = 9  # TODO
+        self.network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num)
         self.node_num = 0
 
-    def get_action(self, env: TicTacToeEnv, return_root=False):
+    def get_action(self, env: gym.Env, obs: Dict, return_root=False):
         self.network.eval()
-        return self._run_mcts(env, return_root)
+        with torch.no_grad():
+            return self._run_mcts(env, obs, return_root)
 
     def train(self, batch, optimizer):
         self.network.train()
@@ -124,8 +136,10 @@ class AlphaZeroAgent(Agent):
         target_values = torch.from_numpy(np.array(target_values)).unsqueeze(1).float()
         target_policies = torch.from_numpy(np.array(target_policies)).float()
 
-        policy, value = self.network.inference(observations)
-        p_loss = -(target_policies * policy.log()).mean()
+        policy_logits, value = self.network.inference(observations)
+        policies = F.softmax(policy_logits, dim=1)
+
+        p_loss = -(target_policies * policies.log()).mean()
         v_loss = F.mse_loss(value, target_values)
 
         optimizer.zero_grad()
@@ -149,11 +163,12 @@ class AlphaZeroAgent(Agent):
         else:
             print(f"{filename} not found")
 
-    def _run_mcts(self, env: TicTacToeEnv, return_root=False):
+    def _run_mcts(self, env: gym.Env, obs: Dict, return_root=False):
         logger.debug(f"*** Run MCTS ***")
-        root = Node(0, env.player)
-        policy, _ = self._inference(env)
-        root.expand(env.legal_actions, policy)
+        root = Node(0, obs["to_play"])
+        policy, _ = self._inference(obs)
+
+        root.expand(obs["legal_actions"], policy)
         root.add_exploration_noise()
         self.node_num = len(root.edges) + 1
         # root.print_node()
@@ -162,58 +177,64 @@ class AlphaZeroAgent(Agent):
             logger.debug("#" * 80)
             logger.debug(f"### *** Simulation[{i+1}] *** ###")
             temp_env = copy.deepcopy(env)
-            search_path = self._find_leaf(root, temp_env)
-            value = self._evaluate(temp_env, search_path[-1])
+            search_path, temp_obs, temp_done = self._find_leaf(root, temp_env)
+            value = self._evaluate(temp_env, temp_obs, temp_done, search_path[-1])
             self._backup(search_path, value)
 
         logger.debug("#" * 80)
         logger.debug("### *** Simulation complete *** ###")
         # root.print_node()
-        # root.print_node(limit_depth=1)
+        root.print_node(limit_depth=1)
         action = root.select_action()
 
         if return_root:
             return action, root
         return action
 
-    def _inference(self, env: TicTacToeEnv):
-        obs = torch.from_numpy(env.observation).float()
-        mask = self._make_mask(env.legal_actions)
-        # print(obs, mask)
-        policy, value = self.network.inference(obs, mask)
-        # print(policy, value)
-        return policy.detach().numpy(), value.item()
+    def _inference(self, obs: Dict):
+        obs_tsr = torch.from_numpy(obs["board"]).unsqueeze(0).float()
+        mask = self._make_mask(obs["legal_actions"])
+        policy_logit, value = self.network.inference(obs_tsr)
+
+        policy_logit += mask.masked_fill(mask == 1, -np.inf)
+        policy = F.softmax(policy_logit, dim=1)
+        # print(policy)
+        return policy[0], value.item()
 
     def _make_mask(self, legal_actions: List[int]):
         mask = torch.ones(9)  # TODO
-        mask[legal_actions] = 0.0
+        mask[legal_actions] = 0
         return mask
 
-    def _find_leaf(self, node: Node, env: TicTacToeEnv) -> List[Edge]:
+    def _find_leaf(self, node: Node, env: gym.Env) -> Tuple:
         logger.debug(f"*** Find leaf ***")
         search_path = []
 
         edge = None
+        temp_done = False
         while node.expanded:
             edge = node.select_edge()
-            env.step(edge.action)
+            temp_obs, _, temp_done, _ = env.step(edge.action)
             search_path.append(edge)
             node = edge.out_node
 
-        return search_path
+        assert temp_obs is not None
+        return search_path, temp_obs, temp_done
 
-    def _evaluate(self, env: TicTacToeEnv, edge: Edge):
-        if env.done:
-            if env.winner == 0:
-                return 0
-            elif env.winner == edge.player:
-                return +1
+    def _evaluate(self, env: gym.Env, obs: Dict, done: bool, edge: Edge):
+        if done:
+            winner = obs["winner"]
+            if winner is not None:
+                if winner == edge.player:
+                    return +1
+                else:
+                    return -1
             else:
-                return -1
+                return 0
         else:
-            policy, value = self._inference(env)
+            policy, value = self._inference(obs)
             logger.debug(f"Node expand")
-            edge.out_node.expand(env.legal_actions, policy, self.node_num)
+            edge.out_node.expand(obs["legal_actions"], policy, self.node_num)
             self.node_num += len(edge.out_node.edges)
             return -value  # 相手から見た価値なので反転させる
 

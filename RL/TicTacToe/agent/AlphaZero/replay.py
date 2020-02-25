@@ -1,26 +1,27 @@
-from typing import List
-import numpy as np
 import logging
+from typing import List
 
-from TicTacToe import TicTacToeEnv
+import numpy as np
+
+import gym_tictactoe  # NOQA
 from logger import setup_logger
 
 logger = setup_logger(__name__, logging.INFO)
 
 
 class GameBuffer:
-    def __init__(self):
-        self.observations = []
-        self.players = []
+    def __init__(self, obs, player):
+        self.observations = [obs]
+        self.players = [player]
         self.actions = []
         self.values = []
         self.child_visits = []
-        self.winner = TicTacToeEnv.EMPTY
+        self.winner = None
         self.num_actions = 9
 
-    def append(self, obs, player, action):
-        self.observations.append(obs)
-        self.players.append(player)
+    def append(self, next_obs, next_player, action):
+        self.observations.append(next_obs)
+        self.players.append(next_player)
         self.actions.append(action)
 
     def store_search_statistics(self, root):
@@ -31,10 +32,11 @@ class GameBuffer:
         ]
         self.child_visits.append(child_visit)
 
-    def set_winner(self, wineer):
-        self.winner = wineer
+    def set_winner(self, winner):
+        self.child_visits.append([1.0 / self.num_actions for _ in range(self.num_actions)])
+        self.winner = winner
         for i in range(len(self.observations)):
-            if self.winner != 0:
+            if self.winner is not None:
                 player = self.players[i]
                 value = +1 if self.winner == player else -1
             else:
@@ -45,11 +47,14 @@ class GameBuffer:
         return self.values[state_index], np.array(self.child_visits[state_index])
 
     def print_buffer(self):
-        for i in range(len(self.observations)):
-            print(
-                f"obs[{self.observations[i]}]/player[{self.players[i]}]/action[{self.actions[i]}]/value[{self.values[i]}]/child_visits[{self.child_visits[i]}]"
-            )
-        print(f"winner[{self.winner}]")
+        print("--- Buffer ---")
+        print("observations: ", self.observations)
+        print("players: ", self.players)
+        print("actions: ", self.actions)
+        print("values: ", self.values)
+        print("child_visits: ", self.child_visits)
+        print("winner: ", self.winner)
+        print("--------------")
 
 
 class ReplayBuffer:
@@ -59,7 +64,7 @@ class ReplayBuffer:
         self.buffer: List[GameBuffer] = []
 
     def append(self, game: GameBuffer):
-        if len(self.buffer) > self.window_size:
+        if len(self.buffer) >= self.window_size:
             self.buffer.pop(0)
         self.buffer.append(game)
 
