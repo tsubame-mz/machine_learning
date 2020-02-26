@@ -112,7 +112,6 @@ class Edge:
 class AlphaZeroAgent(Agent):  # type: ignore
     # TODO:
     # value support: 価値のカテゴリ分布化
-    # value discount: 割引報酬
     def __init__(self):
         self.simulation_num = 20
         obs_space = (3, 3, 3)  # TODO
@@ -226,9 +225,9 @@ class AlphaZeroAgent(Agent):  # type: ignore
             winner = obs["winner"]
             if winner is not None:
                 if winner == edge.player:
-                    return +1
+                    return +10
                 else:
-                    return -1
+                    return -10
             else:
                 return 0
         else:

@@ -196,10 +196,9 @@ version = "0.1.0"
 gym = "^0.16.0"
 
 [package.source]
-reference = "32798657407a23ee89ff267646b1d240ead2d039"
+reference = "4aa15af29f1d0f661543d0329191b13eb4c5d8de"
 type = "git"
 url = "https://github.com/tsubame-mz/gym_tictactoe.git"
-
 [[package]]
 category = "main"
 description = "Internationalized Domain Names in Applications (IDNA)"

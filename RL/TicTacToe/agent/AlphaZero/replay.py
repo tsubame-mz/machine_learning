@@ -18,6 +18,7 @@ class GameBuffer:
         self.child_visits = []
         self.winner = None
         self.num_actions = 9
+        self.discount = 0.95  # TODO
 
     def append(self, next_obs, next_player, action):
         self.observations.append(next_obs)
@@ -38,7 +39,8 @@ class GameBuffer:
         for i in range(len(self.observations)):
             if self.winner is not None:
                 player = self.players[i]
-                value = +1 if self.winner == player else -1
+                value = +10 * (self.discount ** (len(self.observations) - i - 1))
+                value = value if self.winner == player else -value
             else:
                 value = 0
             self.values.append(value)

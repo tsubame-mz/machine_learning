@@ -6,4 +6,3 @@ datasets/
 logs/
 nlp/data/
 RL/ppo/data/
-*.pth

@@ -64,7 +64,7 @@ def calc_win_rate(replay):
     return win_b_rate, win_w_rate, draw_rate
 
 
-def alphazero(env, agent, replay, optimizer, writer):
+def alphazero(env, agent, replay, optimizer, writer, model_file, summary_tag):
     for i in range(10000):
         run_selfplay(env, agent, replay)
         p_loss, v_loss = agent.train(replay.sample_batch(), optimizer)
@@ -72,35 +72,38 @@ def alphazero(env, agent, replay, optimizer, writer):
         print(
             f"{i}: Loss:P[{p_loss:.6f}]/V[{v_loss:.6f}], Win:B[{win_b_rate:.6f}]/W[{win_w_rate:.6f}], Draw[{draw_rate:.6f}]"
         )
-        writer.add_scalar("AlphaZero/p_loss", p_loss, i + 1)
-        writer.add_scalar("AlphaZero/v_loss", v_loss, i + 1)
-        writer.add_scalar("AlphaZero/win_b_rate", win_b_rate, i + 1)
-        writer.add_scalar("AlphaZero/win_w_rate", win_w_rate, i + 1)
-        writer.add_scalar("AlphaZero/draw_rate", draw_rate, i + 1)
+        writer.add_scalar(summary_tag + "/p_loss", p_loss, i + 1)
+        writer.add_scalar(summary_tag + "/v_loss", v_loss, i + 1)
+        writer.add_scalar(summary_tag + "/win_b_rate", win_b_rate, i + 1)
+        writer.add_scalar(summary_tag + "/win_w_rate", win_w_rate, i + 1)
+        writer.add_scalar(summary_tag + "/draw_rate", draw_rate, i + 1)
 
         if (i > 0) and (i % 100) == 0:
             validate(env, agent)
-            agent.save_model("./logs/alphazero_model.pth")
+            agent.save_model("./pretrained/" + model_file)
 
 
 def main():
     replay_buffer_size = 1000
     batch_size = 128
+    model_suffix = "_discount"
+    model_file = "alphazero_model" + model_suffix + ".pth"
+    summary_tag = "AlphaZero" + model_suffix
 
-    env = gym.make("tictactoe-v0")
+    env = gym.make("TicTacToe-v0")
     agent = AlphaZeroAgent()
     replay = ReplayBuffer(replay_buffer_size, batch_size)
     optimizer = radam.RAdam(agent.network.parameters(), lr=1e-2, weight_decay=1e-6)
 
-    agent.load_model("./logs/alphazero_model.pth")
+    agent.load_model("./pretrained/" + model_file)
     try:
-        writer = SummaryWriter("./logs/AlphaZero")
-        alphazero(env, agent, replay, optimizer, writer)
+        writer = SummaryWriter("./logs/" + summary_tag)
+        alphazero(env, agent, replay, optimizer, writer, model_file, summary_tag)
     except KeyboardInterrupt:
         print("Keyboard interrupt")
     print("Train complete")
     validate(env, agent, True)
-    agent.save_model("./logs/alphazero_model.pth")
+    agent.save_model("./pretrained/" + model_file)
 
 
 if __name__ == "__main__":
