@@ -136,9 +136,8 @@ class AlphaZeroAgent(Agent):  # type: ignore
         target_policies = torch.from_numpy(np.array(target_policies)).float()
 
         policy_logits, value = self.network.inference(observations)
-        policies = F.softmax(policy_logits, dim=1)
 
-        p_loss = -(target_policies * policies.log()).mean()
+        p_loss = -(target_policies * F.log_softmax(policy_logits, dim=1)).mean()
         v_loss = F.mse_loss(value, target_values)
 
         optimizer.zero_grad()
