@@ -12,29 +12,48 @@ def conv3x3(in_channels, out_channels):
     return nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
 
 
+class SwishImpl(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, i):
+        result = i * torch.sigmoid(i)
+        ctx.save_for_backward(i)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        i = ctx.saved_variables[0]
+        sigmoid_i = torch.sigmoid(i)
+        return grad_output * (sigmoid_i * (1 + i * (1 - sigmoid_i)))
+
+
+class Swish(nn.Module):
+    def forward(self, x):
+        return SwishImpl.apply(x)
+
+
 class ResNetBlock(nn.Module):
-    def __init__(self, num_channels):
+    def __init__(self, num_channels, activation=Swish):
         super(ResNetBlock, self).__init__()
         self.layers = nn.Sequential(
             conv3x3(num_channels, num_channels),
             nn.BatchNorm2d(num_channels),
-            nn.ReLU(inplace=True),
+            activation(),
             conv3x3(num_channels, num_channels),
             nn.BatchNorm2d(num_channels),
         )
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = activation()
 
     def forward(self, x: torch.Tensor):  # type: ignore
         return self.relu(x + self.layers(x))
 
 
 class ResNet(nn.Module):
-    def __init__(self, in_channels, num_channels):
+    def __init__(self, in_channels, num_channels, activation=Swish):
         super(ResNet, self).__init__()
         self.layers = nn.Sequential(
             conv3x3(in_channels, num_channels),
             nn.BatchNorm2d(num_channels),
-            nn.ReLU(inplace=True),
+            activation(),
             ResNetBlock(num_channels),
             ResNetBlock(num_channels),
         )
@@ -44,13 +63,13 @@ class ResNet(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, input_Num, hid_num, output_num):
+    def __init__(self, input_Num, hid_num, output_num, activation=Swish):
         super(MLP, self).__init__()
         self.layers = nn.Sequential(
             nn.Linear(input_Num, hid_num),
-            nn.ReLU(inplace=True),
+            activation(),
             nn.Linear(hid_num, hid_num),
-            nn.ReLU(inplace=True),
+            activation(),
             nn.Linear(hid_num, output_num),
         )
         self.layers.apply(weight_init)

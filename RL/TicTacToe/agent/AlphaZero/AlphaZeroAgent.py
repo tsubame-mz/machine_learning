@@ -119,6 +119,7 @@ class AlphaZeroAgent(Agent):  # type: ignore
         fc_hid_num = 16  # TODO
         fc_output_num = 9  # TODO
         self.network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num)
+        # print(self.network)
         self.node_num = 0
 
     def get_action(self, env: gym.Env, obs: Dict, return_root=False):
