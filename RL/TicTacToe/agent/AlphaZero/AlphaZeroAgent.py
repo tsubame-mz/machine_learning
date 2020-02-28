@@ -280,8 +280,9 @@ class AlphaZeroAgent(Agent):  # type: ignore
         # print("original x:", x)
         # Reduce scaling
         scaled_x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
-        scaled_x = torch.clamp(x, self.min_v, self.max_v)
         # print("reduce scaled x:", scaled_x)
+        scaled_x = torch.clamp(scaled_x, self.min_v, self.max_v)
+        # print("reduce scaled x(clamp):", scaled_x)
         b = (scaled_x - self.min_v) / (self.delta_z)  # どのインデックスになるか
         # print("b:", b)
         lower_index, upper_index = b.floor().long(), b.ceil().long()  # インデックスを整数値に変換
