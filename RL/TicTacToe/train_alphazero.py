@@ -86,7 +86,7 @@ def alphazero(env, agent, replay, optimizer, writer, model_file, summary_tag):
 def main():
     replay_buffer_size = 1000
     batch_size = 128
-    model_suffix = "_discount"
+    model_suffix = "_support"
     model_file = "alphazero_model" + model_suffix + ".pth"
     summary_tag = "AlphaZero" + model_suffix
 

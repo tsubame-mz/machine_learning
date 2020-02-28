@@ -14,7 +14,7 @@ import gym_tictactoe  # NOQA
 from agent import Agent
 from logger import setup_logger
 
-from .network import AlphaZeroNetwork
+from .network import AlphaZeroNetwork, Mish
 
 logger = setup_logger(__name__, logging.INFO)
 
@@ -118,7 +118,16 @@ class AlphaZeroAgent(Agent):  # type: ignore
         num_channels = 8  # TODO
         fc_hid_num = 16  # TODO
         fc_output_num = 9  # TODO
-        self.network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num)
+
+        # support : TODO
+        self.min_v = -10
+        self.max_v = +10
+        support_size = 25
+        self.atoms = support_size * 2 + 1
+        self.delta_z = (self.max_v - self.min_v) / (self.atoms - 1)
+        self.support_base = torch.linspace(self.min_v, self.max_v, self.atoms)
+
+        self.network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, self.atoms, Mish)
         # print(self.network)
         self.node_num = 0
 
@@ -136,10 +145,13 @@ class AlphaZeroAgent(Agent):  # type: ignore
         target_values = torch.from_numpy(np.array(target_values)).unsqueeze(1).float()
         target_policies = torch.from_numpy(np.array(target_policies)).float()
 
-        policy_logits, value = self.network.inference(observations)
+        target_values = self._scalar_to_support(target_values)
 
-        p_loss = -(target_policies * F.log_softmax(policy_logits, dim=1)).mean()
-        v_loss = F.mse_loss(value, target_values)
+        policy_logits, value_logits = self.network.inference(observations)
+        # print(policy_logits, value_logits)
+
+        p_loss = (-(target_policies * F.log_softmax(policy_logits, dim=1))).sum(dim=1).mean()
+        v_loss = (-(target_values * F.log_softmax(value_logits, dim=1))).sum(dim=1).mean()
 
         optimizer.zero_grad()
         total_loss = p_loss + v_loss
@@ -193,7 +205,10 @@ class AlphaZeroAgent(Agent):  # type: ignore
     def _inference(self, obs: Dict):
         obs_tsr = torch.from_numpy(obs["board"]).unsqueeze(0).float()
         mask = self._make_mask(obs["legal_actions"])
-        policy_logit, value = self.network.inference(obs_tsr)
+        policy_logit, value_logit = self.network.inference(obs_tsr)
+        # print(policy_logit, value_logit)
+        value = self._support_to_scalar(value_logit)
+        # print(value)
 
         policy_logit += mask.masked_fill(mask == 1, -np.inf)
         policy = F.softmax(policy_logit, dim=1)
@@ -244,3 +259,42 @@ class AlphaZeroAgent(Agent):  # type: ignore
             edge.visit_count += 1
             edge.value_sum += value if edge.player == player else -value
             logger.debug(edge)
+
+    def _support_to_scalar(self, logits: torch.Tensor) -> torch.Tensor:
+        # print("# --- support_to_scalar --- #")
+        # print("logits:", logits)
+        probs = torch.softmax(logits, dim=1)
+        # print("probs:", probs)
+        x = (probs * self.support_base).sum(dim=1)
+        # print("original value:", x)
+        # Invert scaling
+        scaled_x = torch.sign(x) * (
+            ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001)) ** 2 - 1
+        )
+        # print("invert scaled value:", scaled_x)
+        return scaled_x
+
+    def _scalar_to_support(self, x: torch.Tensor) -> torch.Tensor:
+        # print("# --- scalar_to_support --- #")
+        batch_size = x.shape[0]
+        # print("original x:", x)
+        # Reduce scaling
+        scaled_x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
+        scaled_x = torch.clamp(x, self.min_v, self.max_v)
+        # print("reduce scaled x:", scaled_x)
+        b = (scaled_x - self.min_v) / (self.delta_z)  # どのインデックスになるか
+        # print("b:", b)
+        lower_index, upper_index = b.floor().long(), b.ceil().long()  # インデックスを整数値に変換
+        # l = u = bの場合インデックスをずらす
+        lower_index[(upper_index > 0) * (lower_index == upper_index)] -= 1  # lを1減らす
+        upper_index[(lower_index < (self.atoms - 1)) * (lower_index == upper_index)] += 1  # uを1増やす
+        # print("index:", lower_index, upper_index)
+        lower_probs = upper_index - b
+        upper_probs = b - lower_index
+        # print("probs:", lower_probs, upper_probs)
+        logits = torch.zeros(batch_size, self.atoms)
+        # print("logits(zeros):", logits)
+        logits.scatter_(dim=1, index=lower_index, src=lower_probs)
+        logits.scatter_(dim=1, index=upper_index, src=upper_probs)
+        # print("logits:", logits)
+        return logits

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def weight_init(m):
@@ -27,8 +28,19 @@ class SwishImpl(torch.autograd.Function):
 
 
 class Swish(nn.Module):
+    def __init__(self):
+        super(Swish, self).__init__()
+
     def forward(self, x):
         return SwishImpl.apply(x)
+
+
+class Mish(nn.Module):
+    def __init__(self):
+        super(Mish, self).__init__()
+
+    def forward(self, x):
+        return x * torch.tanh(F.softplus(x))
 
 
 class ResNetBlock(nn.Module):
@@ -54,8 +66,8 @@ class ResNet(nn.Module):
             conv3x3(in_channels, num_channels),
             nn.BatchNorm2d(num_channels),
             activation(),
-            ResNetBlock(num_channels),
-            ResNetBlock(num_channels),
+            ResNetBlock(num_channels, activation),
+            ResNetBlock(num_channels, activation),
         )
 
     def forward(self, x: torch.Tensor):  # type: ignore
@@ -79,17 +91,17 @@ class MLP(nn.Module):
 
 
 class AlphaZeroNetwork(nn.Module):
-    def __init__(self, obs_space, num_channels, fc_hid_num, fc_output_num):
+    def __init__(self, obs_space, num_channels, fc_hid_num, fc_output_num, atoms, activation=Swish):
         super(AlphaZeroNetwork, self).__init__()
         self.num_channels = num_channels
         in_channels = obs_space[0]
-        self.resnet = ResNet(in_channels, num_channels)
+        self.resnet = ResNet(in_channels, num_channels, activation)
 
         ch_h = obs_space[1]
         ch_w = obs_space[2]
         self.fc_input_num = num_channels * ch_h * ch_w
-        self.policy_layers = MLP(self.fc_input_num, fc_hid_num, fc_output_num)
-        self.value_layers = MLP(self.fc_input_num, fc_hid_num, 1)
+        self.policy_layers = MLP(self.fc_input_num, fc_hid_num, fc_output_num, activation)
+        self.value_layers = MLP(self.fc_input_num, fc_hid_num, atoms, activation)
 
     def inference(self, x: torch.Tensor):
         h = self.resnet(x)
@@ -102,9 +114,11 @@ if __name__ == "__main__":
     num_channels = 8
     fc_hid_num = 16
     fc_output_num = 9
+    support_size = 10
+    atoms = support_size * 2 + 1
     batch_size = 4
 
-    network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num)
+    network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, atoms, Mish)
     print(network)
     x = torch.randn((batch_size, obs_space[0], obs_space[1], obs_space[2]))
     print(x)
