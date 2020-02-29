@@ -122,10 +122,12 @@ class AlphaZeroAgent(Agent):  # type: ignore
         # support : TODO
         self.min_v = -10
         self.max_v = +10
-        support_size = 25
+        support_size = 10
         self.atoms = support_size * 2 + 1
         self.delta_z = (self.max_v - self.min_v) / (self.atoms - 1)
         self.support_base = torch.linspace(self.min_v, self.max_v, self.atoms)
+        self.support_eps = 0.001
+        # print(self.support_base)
 
         self.network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, self.atoms, Mish)
         # print(self.network)
@@ -269,7 +271,12 @@ class AlphaZeroAgent(Agent):  # type: ignore
         # print("original value:", x)
         # Invert scaling
         scaled_x = torch.sign(x) * (
-            ((torch.sqrt(1 + 4 * 0.001 * (torch.abs(x) + 1 + 0.001)) - 1) / (2 * 0.001)) ** 2 - 1
+            (
+                (torch.sqrt(1 + 4 * self.support_eps * (torch.abs(x) + 1 + self.support_eps)) - 1)
+                / (2 * self.support_eps)
+            )
+            ** 2
+            - 1
         )
         # print("invert scaled value:", scaled_x)
         return scaled_x
@@ -279,7 +286,7 @@ class AlphaZeroAgent(Agent):  # type: ignore
         batch_size = x.shape[0]
         # print("original x:", x)
         # Reduce scaling
-        scaled_x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + 0.001 * x
+        scaled_x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + self.support_eps * x
         # print("reduce scaled x:", scaled_x)
         scaled_x = torch.clamp(scaled_x, self.min_v, self.max_v)
         # print("reduce scaled x(clamp):", scaled_x)

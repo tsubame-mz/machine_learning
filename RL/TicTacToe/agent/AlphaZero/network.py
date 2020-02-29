@@ -118,7 +118,7 @@ if __name__ == "__main__":
     atoms = support_size * 2 + 1
     batch_size = 4
 
-    network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, atoms, Mish)
+    network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, atoms)
     print(network)
     x = torch.randn((batch_size, obs_space[0], obs_space[1], obs_space[2]))
     print(x)

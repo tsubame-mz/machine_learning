@@ -3,6 +3,7 @@
 __pycache__
 temp/
 datasets/
-logs/
+RL/TicTacToe/logs/
 nlp/data/
 RL/ppo/data/
+*.pth
