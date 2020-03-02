@@ -16,8 +16,8 @@ from logger import setup_logger
 
 from .network import AlphaZeroNetwork, Mish
 
-# logger = setup_logger(__name__, logging.INFO)
-logger = setup_logger(__name__, logging.DEBUG, "AlphaZero.log")
+logger = setup_logger(__name__, logging.INFO)
+# logger = setup_logger(__name__, logging.DEBUG, "AlphaZero.log")
 
 
 class Node:
