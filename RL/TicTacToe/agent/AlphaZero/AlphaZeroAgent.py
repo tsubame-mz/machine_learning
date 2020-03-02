@@ -17,6 +17,7 @@ from logger import setup_logger
 from .network import AlphaZeroNetwork, Mish
 
 logger = setup_logger(__name__, logging.INFO)
+# logger = setup_logger(__name__, logging.DEBUG, "AlphaZero.log")
 
 
 class Node:
@@ -26,13 +27,14 @@ class Node:
         self.edges: List[Edge] = []
 
     def expand(self, actions: List[int], policy: List[float], next_id: int = 1):
+        actions = np.random.permutation(actions)  # ランダムにする必要があるか？
         for i, action in enumerate(actions):
             child = Node(next_id + i, (self.player + 1) % 2)
             edge = Edge(self, child, action, policy[action])
             self.edges.append(edge)
 
     def add_exploration_noise(self):
-        root_dirichlet_alpha = 0.15  # TODO
+        root_dirichlet_alpha = 0.25  # TODO
         root_exploration_fraction = 0.25  # TODO
         noise = np.random.gamma(root_dirichlet_alpha, 1, len(self.edges))
         frac = root_exploration_fraction
@@ -42,10 +44,14 @@ class Node:
     def select_edge(self) -> Edge:
         # UCBを計算
         # self.print_node()
+        logger.debug(f"* -- Select Edge -- *")
         total_visit = sum([edge.visit_count for edge in self.edges])
         ucb_scores = [edge.ucb_score(total_visit) for edge in self.edges]
         max_idx = np.argmax(ucb_scores)
         edge = self.edges[max_idx]
+        logger.debug("Actions: " + str([edge.action for edge in self.edges]))
+        logger.debug("Priors: " + str([edge.prior for edge in self.edges]))
+        logger.debug("Value(Sum): " + str([edge.value_sum for edge in self.edges]))
         logger.debug("USB score: " + str(ucb_scores))
         logger.debug(f"Max UCB: edge[{edge}]/score[{ucb_scores[max_idx]}]")
         return edge
@@ -110,19 +116,17 @@ class Edge:
 
 
 class AlphaZeroAgent(Agent):  # type: ignore
-    # TODO:
-    # value support: 価値のカテゴリ分布化
     def __init__(self):
-        self.simulation_num = 20
+        self.simulation_num = 100  # TODO: [oの手数]*[xの手数]が最低無いと1手先が読めないはず
         obs_space = (3, 3, 3)  # TODO
         num_channels = 8  # TODO
         fc_hid_num = 16  # TODO
         fc_output_num = 9  # TODO
 
         # support : TODO
-        self.min_v = -10
-        self.max_v = +10
-        support_size = 10
+        self.min_v = -2.5
+        self.max_v = +2.5
+        support_size = 25
         self.atoms = support_size * 2 + 1
         self.delta_z = (self.max_v - self.min_v) / (self.atoms - 1)
         self.support_base = torch.linspace(self.min_v, self.max_v, self.atoms)
@@ -197,7 +201,7 @@ class AlphaZeroAgent(Agent):  # type: ignore
         logger.debug("#" * 80)
         logger.debug("### *** Simulation complete *** ###")
         # root.print_node()
-        root.print_node(limit_depth=1)
+        # root.print_node(limit_depth=1)
         action = root.select_action()
 
         if return_root:
@@ -238,7 +242,8 @@ class AlphaZeroAgent(Agent):  # type: ignore
         return search_path, temp_obs, temp_done
 
     def _evaluate(self, env: gym.Env, obs: Dict, done: bool, edge: Edge):
-        if done:
+        # if done:
+        if False:  # 終端状態も学習できているなら不要かも
             winner = obs["winner"]
             if winner is not None:
                 if winner == edge.player:
@@ -249,9 +254,11 @@ class AlphaZeroAgent(Agent):  # type: ignore
                 return 0
         else:
             policy, value = self._inference(obs)
-            logger.debug(f"Node expand")
-            edge.out_node.expand(obs["legal_actions"], policy, self.node_num)
-            self.node_num += len(edge.out_node.edges)
+            legal_actions = obs["legal_actions"]
+            if len(legal_actions) > 0:
+                logger.debug(f"Node expand")
+                edge.out_node.expand(legal_actions, policy, self.node_num)
+                self.node_num += len(edge.out_node.edges)
             return -value  # 相手から見た価値なので反転させる
 
     def _backup(self, search_path: List[Edge], value: int):
@@ -265,30 +272,26 @@ class AlphaZeroAgent(Agent):  # type: ignore
     def _support_to_scalar(self, logits: torch.Tensor) -> torch.Tensor:
         # print("# --- support_to_scalar --- #")
         # print("logits:", logits)
-        probs = torch.softmax(logits, dim=1)
+        probs = logits.softmax(dim=1)
         # print("probs:", probs)
         x = (probs * self.support_base).sum(dim=1)
         # print("original value:", x)
         # Invert scaling
-        scaled_x = torch.sign(x) * (
-            (
-                (torch.sqrt(1 + 4 * self.support_eps * (torch.abs(x) + 1 + self.support_eps)) - 1)
-                / (2 * self.support_eps)
-            )
-            ** 2
-            - 1
-        )
+        eps = self.support_eps
+        scaled_x = x.sign() * ((((1 + 4 * eps * (x.abs() + 1 + eps)).sqrt() - 1) / (2 * eps)) ** 2 - 1)
         # print("invert scaled value:", scaled_x)
         return scaled_x
 
     def _scalar_to_support(self, x: torch.Tensor) -> torch.Tensor:
         # print("# --- scalar_to_support --- #")
+        # print("support_base:", self.support_base)
         batch_size = x.shape[0]
         # print("original x:", x)
         # Reduce scaling
-        scaled_x = torch.sign(x) * (torch.sqrt(torch.abs(x) + 1) - 1) + self.support_eps * x
+        eps = self.support_eps
+        scaled_x = x.sign() * ((x.abs() + 1).sqrt() - 1) + eps * x
         # print("reduce scaled x:", scaled_x)
-        scaled_x = torch.clamp(scaled_x, self.min_v, self.max_v)
+        scaled_x.clamp_(self.min_v, self.max_v)
         # print("reduce scaled x(clamp):", scaled_x)
         b = (scaled_x - self.min_v) / (self.delta_z)  # どのインデックスになるか
         # print("b:", b)
@@ -304,5 +307,4 @@ class AlphaZeroAgent(Agent):  # type: ignore
         # print("logits(zeros):", logits)
         logits.scatter_(dim=1, index=lower_index, src=lower_probs)
         logits.scatter_(dim=1, index=upper_index, src=upper_probs)
-        # print("logits:", logits)
         return logits

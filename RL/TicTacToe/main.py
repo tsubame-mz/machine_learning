@@ -4,8 +4,7 @@ import torch
 import gym
 import gym_tictactoe  # NOQA
 
-# from agent import RandomAgent, MCTSAgent, AlphaZeroAgent
-from agent import RandomAgent, MCTSAgent
+from agent import RandomAgent, MCTSAgent, AlphaZeroAgent
 
 
 def set_seed(seed):
@@ -18,21 +17,16 @@ def play_game(env, agent_b, agent_w):
     done = False
     while not done:
         # print("-" * 80)
-        # env.render()
+        env.render()
         player = obs["to_play"]
         if player == 0:
-            action = agent_b.get_action(copy.deepcopy(env), obs)
+            action = agent_b.get_action(env, obs)
         else:
-            action = agent_w.get_action(copy.deepcopy(env), obs)
-        next_obs, reward, done, _ = env.step(action)
-        # print("obs: ", obs)
-        # print("action: ", action)
-        # print("next obs: ", next_obs)
-        # print("reward: ", reward)
-        # print("done: ", done)
-        obs = next_obs
+            action = agent_w.get_action(env, obs)
+        obs, _, done, _ = env.step(action)
     # print("-" * 80)
     env.render()
+    exit(0)
     return obs["winner"]
 
 
@@ -56,16 +50,15 @@ def match(num, env, agent_b, agent_w):
 def main():
     # set_seed(0)
 
-    env = gym.make("tictactoe-v0")
-    # agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
-    agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent}
-    agent_b = agent_map["MCTS"]()
-    agent_w = agent_map["MCTS"]()
+    env = gym.make("TicTacToe-v0")
+    agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
+    agent_b = agent_map["AlphaZero"]()
+    agent_w = agent_map["AlphaZero"]()
 
-    # if isinstance(agent_b, AlphaZeroAgent):
-    #     agent_b.load_model("alphazero_model.pth")
-    # if isinstance(agent_w, AlphaZeroAgent):
-    #     agent_w.load_model("alphazero_model.pth")
+    if isinstance(agent_b, AlphaZeroAgent):
+        agent_b.load_model("./pretrained/alphazero_model_support.pth")
+    if isinstance(agent_w, AlphaZeroAgent):
+        agent_w.load_model("./pretrained/alphazero_model_support.pth")
 
     win_agent_b = 0
     win_agent_w = 0

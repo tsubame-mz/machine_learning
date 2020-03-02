@@ -1,7 +1,9 @@
 import logging
 import logging.handlers
+import os
 
-# import os
+LOG_ROTATE_SIZE: int = 10 * 1000 * 1000  # byte
+LOG_ROTATE_NUM: int = 10  # ログファイル数
 
 
 def setup_logger(name: str, level: int = logging.DEBUG, filename: str = None) -> logging.Logger:
@@ -16,20 +18,17 @@ def setup_logger(name: str, level: int = logging.DEBUG, filename: str = None) ->
 
     # console
     ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
+    ch.setLevel(level)
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
     # file
-    # if filename is not None:
-    #     if not os.path.exists(LOG_FILE_DIR):
-    #         os.mkdir(LOG_FILE_DIR)
-
-    #     fh = logging.handlers.RotatingFileHandler(
-    #         os.path.join(LOG_FILE_DIR, filename), maxBytes=LOG_ROTATE_SIZE, backupCount=LOG_ROTATE_NUM
-    #     )
-    #     fh.setLevel(logging.DEBUG)
-    #     fh.setFormatter(formatter)
-    #     logger.addHandler(fh)
+    if filename is not None:
+        fh = logging.handlers.RotatingFileHandler(
+            os.path.join("./logs/", filename), maxBytes=LOG_ROTATE_SIZE, backupCount=LOG_ROTATE_NUM
+        )
+        fh.setLevel(level)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
 
     return logger

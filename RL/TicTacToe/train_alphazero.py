@@ -1,4 +1,5 @@
 import copy
+import logging
 
 import gym
 from torch.utils.tensorboard import SummaryWriter
@@ -7,6 +8,9 @@ import gym_tictactoe  # NOQA
 import radam
 from agent import AlphaZeroAgent
 from agent.AlphaZero import GameBuffer, ReplayBuffer
+from logger import setup_logger
+
+logger = setup_logger(__name__, logging.INFO)
 
 
 def play_game(env, agent):
@@ -69,7 +73,7 @@ def alphazero(env, agent, replay, optimizer, writer, model_file, summary_tag):
         run_selfplay(env, agent, replay)
         p_loss, v_loss = agent.train(replay.sample_batch(), optimizer)
         win_b_rate, win_w_rate, draw_rate = calc_win_rate(replay)
-        print(
+        logger.info(
             f"{i}: Loss:P[{p_loss:.6f}]/V[{v_loss:.6f}], Win:B[{win_b_rate:.6f}]/W[{win_w_rate:.6f}], Draw[{draw_rate:.6f}]"
         )
         writer.add_scalar(summary_tag + "/p_loss", p_loss, i + 1)
