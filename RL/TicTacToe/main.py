@@ -17,7 +17,7 @@ def play_game(env, agent_b, agent_w):
     done = False
     while not done:
         # print("-" * 80)
-        env.render()
+        # env.render()
         player = obs["to_play"]
         if player == 0:
             action = agent_b.get_action(env, obs)
@@ -26,7 +26,6 @@ def play_game(env, agent_b, agent_w):
         obs, _, done, _ = env.step(action)
     # print("-" * 80)
     env.render()
-    exit(0)
     return obs["winner"]
 
 
@@ -52,7 +51,7 @@ def main():
 
     env = gym.make("TicTacToe-v0")
     agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
-    agent_b = agent_map["AlphaZero"]()
+    agent_b = agent_map["MCTS"]()
     agent_w = agent_map["AlphaZero"]()
 
     if isinstance(agent_b, AlphaZeroAgent):
