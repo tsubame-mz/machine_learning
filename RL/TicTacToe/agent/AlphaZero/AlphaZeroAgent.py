@@ -16,8 +16,8 @@ from logger import setup_logger
 
 from .network import AlphaZeroNetwork, Mish
 
-logger = setup_logger(__name__, logging.INFO)
-# logger = setup_logger(__name__, logging.DEBUG, "AlphaZero.log")
+# logger = setup_logger(__name__, logging.INFO)
+logger = setup_logger(__name__, logging.DEBUG, "AlphaZero.log")
 
 
 class Node:
@@ -242,8 +242,7 @@ class AlphaZeroAgent(Agent):  # type: ignore
         return search_path, temp_obs, temp_done
 
     def _evaluate(self, env: gym.Env, obs: Dict, done: bool, edge: Edge):
-        # if done:
-        if False:  # 終端状態も学習できているなら不要かも
+        if done:
             winner = obs["winner"]
             if winner is not None:
                 if winner == edge.player:
