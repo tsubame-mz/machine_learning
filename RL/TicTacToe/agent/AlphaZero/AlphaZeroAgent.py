@@ -14,7 +14,8 @@ import gym_tictactoe  # NOQA
 from agent import Agent
 from logger import setup_logger
 
-from .network import AlphaZeroNetwork, Mish
+from .network import AlphaZeroNetwork
+from .config import AlphaZeroConfig
 
 logger = setup_logger(__name__, logging.INFO)
 # logger = setup_logger(__name__, logging.DEBUG, "AlphaZero.log")
@@ -33,20 +34,18 @@ class Node:
             edge = Edge(self, child, action, policy[action])
             self.edges.append(edge)
 
-    def add_exploration_noise(self):
-        root_dirichlet_alpha = 0.25  # TODO
-        root_exploration_fraction = 0.25  # TODO
+    def add_exploration_noise(self, root_dirichlet_alpha, root_exploration_fraction):
         noise = np.random.gamma(root_dirichlet_alpha, 1, len(self.edges))
         frac = root_exploration_fraction
         for edge, n in zip(self.edges, noise):
             edge.prior = (edge.prior * (1 - frac)) + (n * frac)
 
-    def select_edge(self) -> Edge:
+    def select_edge(self, pb_c_base, pb_c_init) -> Edge:
         # UCBを計算
         # self.print_node()
         logger.debug(f"* -- Select Edge -- *")
         total_visit = sum([edge.visit_count for edge in self.edges])
-        ucb_scores = [edge.ucb_score(total_visit) for edge in self.edges]
+        ucb_scores = [edge.ucb_score(total_visit, pb_c_base, pb_c_init) for edge in self.edges]
         max_idx = np.argmax(ucb_scores)
         edge = self.edges[max_idx]
         logger.debug("Actions: " + str([edge.action for edge in self.edges]))
@@ -95,9 +94,7 @@ class Edge:
         self.in_node = in_node
         self.out_node = out_node
 
-    def ucb_score(self, total_visit):
-        pb_c_base = 19652  # TODO
-        pb_c_init = 1.25  # TODO
+    def ucb_score(self, total_visit, pb_c_base, pb_c_init):
         pb_c = np.log((total_visit + pb_c_base + 1) / pb_c_base) + pb_c_init
         pb_c *= np.sqrt(total_visit) / (self.visit_count + 1)
         prior_score = pb_c * self.prior
@@ -116,25 +113,14 @@ class Edge:
 
 
 class AlphaZeroAgent(Agent):  # type: ignore
-    def __init__(self):
-        self.simulation_num = 100  # TODO: [oの手数]*[xの手数]が最低無いと1手先が読めないはず
-        obs_space = (3, 3, 3)  # TODO
-        num_channels = 8  # TODO
-        fc_hid_num = 16  # TODO
-        fc_output_num = 9  # TODO
+    def __init__(self, config: AlphaZeroConfig):
+        self.config = config
 
-        # support : TODO
-        self.min_v = -2.5
-        self.max_v = +2.5
-        support_size = 25
-        self.atoms = support_size * 2 + 1
-        self.delta_z = (self.max_v - self.min_v) / (self.atoms - 1)
-        self.support_base = torch.linspace(self.min_v, self.max_v, self.atoms)
-        self.support_eps = 0.001
-        # print(self.support_base)
-
-        self.network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, self.atoms, Mish)
+        self.network = AlphaZeroNetwork(
+            config.obs_space, config.num_channels, config.fc_hid_num, config.fc_output_num, config.atoms
+        )
         # print(self.network)
+        self.network.to(config.device)
         self.node_num = 0
 
     def get_action(self, env: gym.Env, obs: Dict, return_root=False):
@@ -175,7 +161,7 @@ class AlphaZeroAgent(Agent):  # type: ignore
     def load_model(self, filename):
         print(f"Load model: {filename}")
         if os.path.exists(filename):
-            load_data = torch.load(filename)
+            load_data = torch.load(filename, map_location=self.config.device)
             self.network.load_state_dict(load_data["state_dict"])
         else:
             print(f"{filename} not found")
@@ -186,11 +172,11 @@ class AlphaZeroAgent(Agent):  # type: ignore
         policy, _ = self._inference(obs)
 
         root.expand(obs["legal_actions"], policy)
-        root.add_exploration_noise()
+        root.add_exploration_noise(self.config.root_dirichlet_alpha, self.config.root_exploration_fraction)
         self.node_num = len(root.edges) + 1
         # root.print_node()
 
-        for i in range(self.simulation_num):
+        for i in range(self.config.simulation_num):
             logger.debug("#" * 80)
             logger.debug(f"### *** Simulation[{i+1}] *** ###")
             temp_env = copy.deepcopy(env)
@@ -209,20 +195,20 @@ class AlphaZeroAgent(Agent):  # type: ignore
         return action
 
     def _inference(self, obs: Dict):
-        obs_tsr = torch.from_numpy(obs["board"]).unsqueeze(0).float()
-        mask = self._make_mask(obs["legal_actions"])
+        obs_tsr = torch.from_numpy(obs["board"]).unsqueeze(0).float().to(self.config.device)
         policy_logit, value_logit = self.network.inference(obs_tsr)
         # print(policy_logit, value_logit)
         value = self._support_to_scalar(value_logit)
         # print(value)
 
+        mask = self._make_mask(obs["legal_actions"])
         policy_logit += mask.masked_fill(mask == 1, -np.inf)
         policy = F.softmax(policy_logit, dim=1)
         # print(policy)
         return policy[0], value.item()
 
     def _make_mask(self, legal_actions: List[int]):
-        mask = torch.ones(9)  # TODO
+        mask = torch.ones(self.config.action_space)
         mask[legal_actions] = 0
         return mask
 
@@ -233,7 +219,7 @@ class AlphaZeroAgent(Agent):  # type: ignore
         edge = None
         temp_done = False
         while node.expanded:
-            edge = node.select_edge()
+            edge = node.select_edge(self.config.pb_c_base, self.config.pb_c_init)
             temp_obs, _, temp_done, _ = env.step(edge.action)
             search_path.append(edge)
             node = edge.out_node
@@ -246,9 +232,9 @@ class AlphaZeroAgent(Agent):  # type: ignore
             winner = obs["winner"]
             if winner is not None:
                 if winner == edge.player:
-                    return +10
+                    return +self.config.terminate_value
                 else:
-                    return -10
+                    return -self.config.terminate_value
             else:
                 return 0
         else:
@@ -269,41 +255,32 @@ class AlphaZeroAgent(Agent):  # type: ignore
             logger.debug(edge)
 
     def _support_to_scalar(self, logits: torch.Tensor) -> torch.Tensor:
-        # print("# --- support_to_scalar --- #")
-        # print("logits:", logits)
         probs = logits.softmax(dim=1)
-        # print("probs:", probs)
-        x = (probs * self.support_base).sum(dim=1)
-        # print("original value:", x)
+        x = (probs * self.config.support_base).sum(dim=1)
+
         # Invert scaling
-        eps = self.support_eps
+        eps = self.config.support_eps
         scaled_x = x.sign() * ((((1 + 4 * eps * (x.abs() + 1 + eps)).sqrt() - 1) / (2 * eps)) ** 2 - 1)
-        # print("invert scaled value:", scaled_x)
+
         return scaled_x
 
     def _scalar_to_support(self, x: torch.Tensor) -> torch.Tensor:
-        # print("# --- scalar_to_support --- #")
-        # print("support_base:", self.support_base)
         batch_size = x.shape[0]
-        # print("original x:", x)
+
         # Reduce scaling
-        eps = self.support_eps
+        eps = self.config.support_eps
         scaled_x = x.sign() * ((x.abs() + 1).sqrt() - 1) + eps * x
-        # print("reduce scaled x:", scaled_x)
-        scaled_x.clamp_(self.min_v, self.max_v)
-        # print("reduce scaled x(clamp):", scaled_x)
-        b = (scaled_x - self.min_v) / (self.delta_z)  # どのインデックスになるか
-        # print("b:", b)
+        scaled_x.clamp_(self.config.min_v, self.config.max_v)
+
+        b = (scaled_x - self.config.min_v) / (self.config.delta_z)  # どのインデックスになるか
         lower_index, upper_index = b.floor().long(), b.ceil().long()  # インデックスを整数値に変換
         # l = u = bの場合インデックスをずらす
         lower_index[(upper_index > 0) * (lower_index == upper_index)] -= 1  # lを1減らす
-        upper_index[(lower_index < (self.atoms - 1)) * (lower_index == upper_index)] += 1  # uを1増やす
-        # print("index:", lower_index, upper_index)
+        upper_index[(lower_index < (self.config.atoms - 1)) * (lower_index == upper_index)] += 1  # uを1増やす
         lower_probs = upper_index - b
         upper_probs = b - lower_index
-        # print("probs:", lower_probs, upper_probs)
-        logits = torch.zeros(batch_size, self.atoms)
-        # print("logits(zeros):", logits)
+
+        logits = torch.zeros(batch_size, self.config.atoms)
         logits.scatter_(dim=1, index=lower_index, src=lower_probs)
         logits.scatter_(dim=1, index=upper_index, src=upper_probs)
         return logits

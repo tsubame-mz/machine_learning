@@ -10,15 +10,14 @@ logger = setup_logger(__name__, logging.INFO)
 
 
 class GameBuffer:
-    def __init__(self, obs, player):
+    def __init__(self, obs, player, action_space):
         self.observations = [obs]
         self.players = [player]
         self.actions = []
         self.values = []
         self.child_visits = []
         self.winner = None
-        self.num_actions = 9
-        self.discount = 0.95  # TODO
+        self.action_space = action_space
 
     def append(self, next_obs, next_player, action):
         self.observations.append(next_obs)
@@ -29,17 +28,17 @@ class GameBuffer:
         total_visit = sum([edge.visit_count for edge in root.edges])
         edge_map = {edge.action: edge.visit_count for edge in root.edges}
         child_visit = [
-            edge_map[action] / total_visit if action in edge_map else 0 for action in range(self.num_actions)
+            edge_map[action] / total_visit if action in edge_map else 0 for action in range(self.action_space)
         ]
         self.child_visits.append(child_visit)
 
-    def set_winner(self, winner):
-        self.child_visits.append([1.0 / self.num_actions for _ in range(self.num_actions)])
+    def set_winner(self, winner, discount, reward):
+        self.child_visits.append([1.0 / self.action_space for _ in range(self.action_space)])
         self.winner = winner
         for i in range(len(self.observations)):
             if self.winner is not None:
                 player = self.players[i]
-                value = +10 * (self.discount ** (len(self.observations) - i - 1))
+                value = reward * (discount ** (len(self.observations) - i - 1))
                 value = value if self.winner == player else -value
             else:
                 value = 0
