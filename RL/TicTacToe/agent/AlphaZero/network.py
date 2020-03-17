@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .config import AlphaZeroConfig
+
 
 def weight_init(m):
     if isinstance(m, nn.Linear):
@@ -91,17 +93,18 @@ class MLP(nn.Module):
 
 
 class AlphaZeroNetwork(nn.Module):
-    def __init__(self, obs_space, num_channels, fc_hid_num, fc_output_num, atoms, activation=Swish):
+    def __init__(self, config: AlphaZeroConfig, activation=Swish):
         super(AlphaZeroNetwork, self).__init__()
-        self.num_channels = num_channels
-        in_channels = obs_space[0]
-        self.resnet = ResNet(in_channels, num_channels, activation)
 
-        ch_h = obs_space[1]
-        ch_w = obs_space[2]
-        self.fc_input_num = num_channels * ch_h * ch_w
-        self.policy_layers = MLP(self.fc_input_num, fc_hid_num, fc_output_num, activation)
-        self.value_layers = MLP(self.fc_input_num, fc_hid_num, atoms, activation)
+        self.num_channels = config.num_channels
+        in_channels = config.obs_space[0]
+        self.resnet = ResNet(in_channels, config.num_channels, activation)
+
+        ch_h = config.obs_space[1]
+        ch_w = config.obs_space[2]
+        self.fc_input_num = config.num_channels * ch_h * ch_w
+        self.policy_layers = MLP(self.fc_input_num, config.fc_hid_num, config.fc_output_num, activation)
+        self.value_layers = MLP(self.fc_input_num, config.fc_hid_num, config.atoms, activation)
 
     def inference(self, x: torch.Tensor):
         h = self.resnet(x)
@@ -110,17 +113,18 @@ class AlphaZeroNetwork(nn.Module):
 
 
 if __name__ == "__main__":
-    obs_space = (3, 3, 3)
-    num_channels = 8
-    fc_hid_num = 16
-    fc_output_num = 9
-    support_size = 10
-    atoms = support_size * 2 + 1
+    config = AlphaZeroConfig()
+    config.obs_space = (3, 3, 3)
+    config.num_channels = 8
+    config.fc_hid_num = 16
+    config.fc_output_num = 9
+    config.support_size = 10
+    config.atoms = config.support_size * 2 + 1
     batch_size = 4
 
-    network = AlphaZeroNetwork(obs_space, num_channels, fc_hid_num, fc_output_num, atoms)
+    network = AlphaZeroNetwork(config)
     print(network)
-    x = torch.randn((batch_size, obs_space[0], obs_space[1], obs_space[2]))
+    x = torch.randn((batch_size, config.obs_space[0], config.obs_space[1], config.obs_space[2]))
     print(x)
     policy_logits, value_logits = network.inference(x)
     print(policy_logits)

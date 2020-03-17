@@ -2,6 +2,7 @@ import gym
 
 import gym_tictactoe  # NOQA
 from agent import AlphaZeroAgent
+from agent.AlphaZero import AlphaZeroConfig, AlphaZeroNetwork
 
 
 def test_agent_mcts_action(env, actions, agent, except_action):
@@ -52,8 +53,11 @@ def test_mcts_w_lose(env, agent):
 
 if __name__ == "__main__":
     env = gym.make("TicTacToe-v0")
-    agent = AlphaZeroAgent()  # type: ignore
-    # agent.load_model("./pretrained/alphazero_model_support.pth")
+
+    config = AlphaZeroConfig()
+    network = AlphaZeroNetwork(config)
+    agent = AlphaZeroAgent(config, network)
+    agent.load_model("./pretrained/alphazero_model.pth")
 
     test_mcts_b_win(env, agent)
     test_mcts_w_win(env, agent)

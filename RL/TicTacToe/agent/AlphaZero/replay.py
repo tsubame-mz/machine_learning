@@ -6,6 +6,8 @@ import numpy as np
 import gym_tictactoe  # NOQA
 from logger import setup_logger
 
+from .config import AlphaZeroConfig
+
 logger = setup_logger(__name__, logging.INFO)
 
 
@@ -59,17 +61,16 @@ class GameBuffer:
 
 
 class ReplayBuffer:
-    def __init__(self, window_size: int, batch_size: int):
-        self.window_size = window_size
-        self.batch_size = batch_size
+    def __init__(self, config: AlphaZeroConfig):
+        self.config = config
         self.buffer: List[GameBuffer] = []
 
     def append(self, game: GameBuffer):
-        if len(self.buffer) >= self.window_size:
+        if len(self.buffer) >= self.config.replay_buffer_size:
             self.buffer.pop(0)
         self.buffer.append(game)
 
     def sample_batch(self):
-        games = np.random.choice(self.buffer, self.batch_size)
+        games = np.random.choice(self.buffer, self.config.batch_size)
         game_pos = [(g, np.random.randint(len(g.observations))) for g in games]
         return [(g.observations[i], g.make_target(i)) for (g, i) in game_pos]

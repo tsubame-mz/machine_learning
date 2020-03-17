@@ -4,6 +4,7 @@ import gym
 import gym_tictactoe  # NOQA
 
 from agent import RandomAgent, MCTSAgent, AlphaZeroAgent
+from agent.AlphaZero import AlphaZeroConfig, AlphaZeroNetwork
 
 
 def set_seed(seed):
@@ -45,18 +46,27 @@ def match(num, env, agent_b, agent_w):
     return win_b_cnt, win_w_cnt, draw_cnt
 
 
+def build_agent(name):
+    if name == "Random":
+        return RandomAgent()
+    elif name == "MCTS":
+        return MCTSAgent()
+    elif name == "AlphaZero":
+        config = AlphaZeroConfig()
+        network = AlphaZeroNetwork(config)
+        agent = AlphaZeroAgent(config, network)
+        agent.load_model("./pretrained/alphazero_model.pth")
+        return agent
+    else:
+        raise RuntimeError
+
+
 def main():
     # set_seed(0)
 
     env = gym.make("TicTacToe-v0")
-    agent_map = {"Random": RandomAgent, "MCTS": MCTSAgent, "AlphaZero": AlphaZeroAgent}
-    agent_b = agent_map["MCTS"]()
-    agent_w = agent_map["AlphaZero"]()
-
-    if isinstance(agent_b, AlphaZeroAgent):
-        agent_b.load_model("./pretrained/alphazero_model_support.pth")
-    if isinstance(agent_w, AlphaZeroAgent):
-        agent_w.load_model("./pretrained/alphazero_model_support.pth")
+    agent_b = build_agent("MCTS")
+    agent_w = build_agent("AlphaZero")
 
     win_agent_b = 0
     win_agent_w = 0

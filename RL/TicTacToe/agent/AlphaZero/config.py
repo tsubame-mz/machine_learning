@@ -26,6 +26,7 @@ class AlphaZeroConfig:
         self.num_channels = 8
         self.fc_hid_num = 16
         self.fc_output_num = 9
+        self.model_file = "alphazero_model.pth"
 
         # Value support
         self.min_v = -2.5
@@ -50,3 +51,6 @@ class AlphaZeroConfig:
         self.weight_decay = 1e-6
         self.max_training_step = 10000
         self.validate_interval = 100
+
+        # Validate
+        self.calc_rate_size = 100  # 直近のReplayから勝率を計算

@@ -113,45 +113,15 @@ class Edge:
 
 
 class AlphaZeroAgent(Agent):  # type: ignore
-    def __init__(self, config: AlphaZeroConfig):
+    def __init__(self, config: AlphaZeroConfig, network: AlphaZeroNetwork):
         self.config = config
-
-        self.network = AlphaZeroNetwork(
-            config.obs_space, config.num_channels, config.fc_hid_num, config.fc_output_num, config.atoms
-        )
-        # print(self.network)
-        self.network.to(config.device)
+        self.network = network
         self.node_num = 0
 
     def get_action(self, env: gym.Env, obs: Dict, return_root=False):
         self.network.eval()
         with torch.no_grad():
             return self._run_mcts(env, obs, return_root)
-
-    def train(self, batch, optimizer):
-        self.network.train()
-
-        observations, targets = zip(*batch)
-        observations = torch.from_numpy(np.array(observations)).float()
-        target_values, target_policies = zip(*targets)
-        target_values = torch.from_numpy(np.array(target_values)).unsqueeze(1).float()
-        target_policies = torch.from_numpy(np.array(target_policies)).float()
-
-        target_values = self._scalar_to_support(target_values)
-
-        policy_logits, value_logits = self.network.inference(observations)
-        # print(policy_logits, value_logits)
-
-        p_loss = (-(target_policies * F.log_softmax(policy_logits, dim=1))).sum(dim=1).mean()
-        v_loss = (-(target_values * F.log_softmax(value_logits, dim=1))).sum(dim=1).mean()
-
-        optimizer.zero_grad()
-        total_loss = p_loss + v_loss
-        total_loss.backward()
-        # torch.nn.utils.clip_grad_norm_(self.network.parameters(), 0.5)
-        optimizer.step()
-
-        return p_loss.item(), v_loss.item()
 
     def save_model(self, filename):
         print(f"Save model: {filename}")
@@ -263,24 +233,3 @@ class AlphaZeroAgent(Agent):  # type: ignore
         scaled_x = x.sign() * ((((1 + 4 * eps * (x.abs() + 1 + eps)).sqrt() - 1) / (2 * eps)) ** 2 - 1)
 
         return scaled_x
-
-    def _scalar_to_support(self, x: torch.Tensor) -> torch.Tensor:
-        batch_size = x.shape[0]
-
-        # Reduce scaling
-        eps = self.config.support_eps
-        scaled_x = x.sign() * ((x.abs() + 1).sqrt() - 1) + eps * x
-        scaled_x.clamp_(self.config.min_v, self.config.max_v)
-
-        b = (scaled_x - self.config.min_v) / (self.config.delta_z)  # どのインデックスになるか
-        lower_index, upper_index = b.floor().long(), b.ceil().long()  # インデックスを整数値に変換
-        # l = u = bの場合インデックスをずらす
-        lower_index[(upper_index > 0) * (lower_index == upper_index)] -= 1  # lを1減らす
-        upper_index[(lower_index < (self.config.atoms - 1)) * (lower_index == upper_index)] += 1  # uを1増やす
-        lower_probs = upper_index - b
-        upper_probs = b - lower_index
-
-        logits = torch.zeros(batch_size, self.config.atoms)
-        logits.scatter_(dim=1, index=lower_index, src=lower_probs)
-        logits.scatter_(dim=1, index=upper_index, src=upper_probs)
-        return logits
