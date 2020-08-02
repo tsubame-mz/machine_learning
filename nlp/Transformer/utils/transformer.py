@@ -40,10 +40,10 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
 
         self.d_model = d_model
-        self.q_linear = nn.Linear(d_model, d_model)
-        self.k_linear = nn.Linear(d_model, d_model)
-        self.v_linear = nn.Linear(d_model, d_model)
-        self.out = nn.Linear(d_model, d_model)
+        self.q_linear = nn.Linear(d_model, d_model, bias=False)
+        self.k_linear = nn.Linear(d_model, d_model, bias=False)
+        self.v_linear = nn.Linear(d_model, d_model, bias=False)
+        self.out = nn.Linear(d_model, d_model, bias=False)
 
     def forward(self, x, mask):
         q = self.q_linear(x)
@@ -118,12 +118,14 @@ class TransformerClassification(nn.Module):
         self.pe = PositionEncoder(d_model, max_seq_len, device)
         self.trm1 = TransformerBlock(d_model, d_hidden, drop_ratio)
         self.trm2 = TransformerBlock(d_model, d_hidden, drop_ratio)
+        self.norm = nn.LayerNorm(d_model)
         self.head = ClassificationHead(d_model, d_out)
 
     def forward(self, x, mask):
         h = self.pe(self.emb(x))
         h, attn_w1 = self.trm1(h, mask)
         h, attn_w2 = self.trm2(h, mask)
+        h = self.norm(h)
         h = self.head(h)
         return h, attn_w1, attn_w2
 
