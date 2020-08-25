@@ -1,6 +1,5 @@
 {
     "python.venvPath": ".venv",
-    "python.pythonPath": ".venv\\Scripts\\python.exe",
     "python.autoComplete.extraPaths": ["./RL/TicTacToe"],
     "python.autoComplete.addBrackets": true,
     "python.jediEnabled": false,
@@ -33,4 +32,5 @@
         "editor.insertSpaces": true,
         "editor.tabSize": 4
     },
+    "python.languageServer": "Microsoft",
 }
