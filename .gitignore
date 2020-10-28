@@ -7,3 +7,4 @@ RL/TicTacToe/logs/
 nlp/data/
 RL/ppo/data/
 *.pth
+data/MNIST/
